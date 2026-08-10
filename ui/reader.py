@@ -1,12 +1,59 @@
 from datetime import datetime
 import pymupdf as fitz
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QPushButton, QScrollArea, QMessageBox, QFrame)
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
+    QPushButton, QScrollArea, QMessageBox, QFrame, QCheckBox
+)
 from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor
 from PySide6.QtCore import Qt, QTimer, QTime, Signal, QRect
+
 from database.connection import SessionLocal
 from models.models import StudyBlock, BlockStatus, Topic, PdfDocument, Subject, Highlight
 from services.study_manager import StudyManager
+
+
+class PDFSelectableLabel(QLabel):
+    """Custom Label supporting mouse drag selection for PDF coordinates."""
+    area_selected = Signal(QRect)
+
+    def __init__(self, text=""):
+        super().__init__(text)
+        self.selection_start = None
+        self.selection_end = None
+        self.is_selecting = False
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.selection_start = event.position().toPoint()
+            self.selection_end = self.selection_start
+            self.is_selecting = True
+            self.update()
+
+    def mouseMoveEvent(self, event):
+        if self.is_selecting:
+            self.selection_end = event.position().toPoint()
+            self.update()
+
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self.is_selecting:
+            self.is_selecting = False
+            self.selection_end = event.position().toPoint()
+            rect = QRect(self.selection_start, self.selection_end).normalized()
+            if rect.width() > 5 and rect.height() > 5:
+                self.area_selected.emit(rect)
+            self.selection_start = None
+            self.selection_end = None
+            self.update()
+
+    def paintEvent(self, event):
+        super().paintEvent(event)
+        if self.is_selecting and self.selection_start and self.selection_end:
+            painter = QPainter(self)
+            rect = QRect(self.selection_start, self.selection_end).normalized()
+            painter.setPen(QPen(QColor(255, 230, 0, 200), 1, Qt.PenStyle.SolidLine))
+            painter.setBrush(QColor(255, 235, 59, 80))
+            painter.drawRect(rect)
+
 
 class StudyReaderView(QWidget):
     back_requested = Signal()
@@ -19,6 +66,9 @@ class StudyReaderView(QWidget):
         self.current_page = 0
         self.total_pages = 0
         
+        # Flag para controlar se a mensagem de conclusão deve ser ocultada
+        self.dont_show_completion_msg = False
+
         # Meta do bloco em memória
         self.page_start = 1
         self.page_end = 1
@@ -65,6 +115,11 @@ class StudyReaderView(QWidget):
         self.btn_next_page.clicked.connect(self.next_page)
         nav_layout.addWidget(self.btn_next_page)
 
+        # Botão de Desfazer Grifo
+        self.btn_undo_highlight = QPushButton("↩️ Desfazer Grifo")
+        self.btn_undo_highlight.clicked.connect(self.undo_last_highlight)
+        nav_layout.addWidget(self.btn_undo_highlight)
+
         pdf_container.addLayout(nav_layout)
         main_layout.addLayout(pdf_container, stretch=4)
 
@@ -103,11 +158,6 @@ class StudyReaderView(QWidget):
         btn_timer_layout.addWidget(self.btn_pause_timer)
 
         timer_layout.addLayout(btn_timer_layout)
-
-        # Botão de Desfazer Grifo
-        self.btn_undo_highlight = QPushButton("↩️ Desfazer Grifo")
-        self.btn_undo_highlight.clicked.connect(self.undo_last_highlight)
-        nav_layout.addWidget(self.btn_undo_highlight)
 
         self.btn_reset_timer = QPushButton("⏹️ Parar e Descartar")
         self.btn_reset_timer.setStyleSheet("""
@@ -196,7 +246,6 @@ class StudyReaderView(QWidget):
             self.render_page()
 
     def load_block(self, block_id):
-        # Limpa o documento anterior antes de carregar o novo
         self.unload_pdf()
         self.block_id = block_id
         self.reset_timer(confirm=False)
@@ -246,7 +295,7 @@ class StudyReaderView(QWidget):
 
         page = self.doc[self.current_page]
 
-        # Remove anotações no PyMuPDF para redesenhar com base no banco
+        # Remove anotações temporárias do PDF para redesenhar atualizadas do BD
         annot = page.first_annot
         while annot:
             next_annot = annot.next
@@ -254,7 +303,7 @@ class StudyReaderView(QWidget):
                 page.delete_annot(annot)
             annot = next_annot
 
-        # Desenha os grifos persistidos no banco
+        # Desenha os grifos persistidos no banco de dados
         if self.current_pdf_id:
             db = SessionLocal()
             try:
@@ -268,19 +317,22 @@ class StudyReaderView(QWidget):
                         matches = page.search_for(hl.selected_text)
                         for rect in matches:
                             annot = page.add_highlight_annot(rect)
-                            annot.set_colors(stroke=(1, 1, 0))  # Amarelo
+                            annot.set_colors(stroke=(1, 1, 0))  # Cor Amarela
                             annot.update()
             except Exception as e:
                 print(f"Erro ao carregar grifos: {e}")
             finally:
                 db.close()
 
-        target_width = max(400, self.scroll_area.viewport().width() - 30)
+        viewport_w = self.scroll_area.viewport().width()
+        target_width = max(400, viewport_w - 30) if viewport_w > 30 else 400
         zoom = target_width / page.rect.width
         matrix = fitz.Matrix(zoom, zoom)
 
         pix = page.get_pixmap(matrix=matrix)
-        qimg = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format_RGB888)
+        
+        # Faz uma cópia explícita da imagem para evitar vazamento/crash de ponteiro C/Python
+        qimg = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format_RGB888).copy()
         pixmap = QPixmap.fromImage(qimg)
 
         self.lbl_pdf_page.setPixmap(pixmap)
@@ -306,29 +358,13 @@ class StudyReaderView(QWidget):
         finally:
             db.close()
 
-    def clear_all_page_highlights(self):
-        if not self.current_pdf_id:
-            return
-
-        db = SessionLocal()
-        try:
-            db.query(Highlight).filter(
-                Highlight.pdf_id == self.current_pdf_id,
-                Highlight.page_number == self.current_page + 1
-            ).delete()
-            db.commit()
-            self.render_page()
-        except Exception as e:
-            print(f"Erro ao limpar grifos: {e}")
-        finally:
-            db.close()
-
     def handle_area_selected(self, rect):
         if not self.doc or self.current_page < 0:
             return
 
         page = self.doc[self.current_page]
-        target_width = max(400, self.scroll_area.viewport().width() - 30)
+        viewport_w = self.scroll_area.viewport().width()
+        target_width = max(400, viewport_w - 30) if viewport_w > 30 else 400
         zoom = target_width / page.rect.width
 
         pdf_rect = fitz.Rect(
@@ -347,7 +383,6 @@ class StudyReaderView(QWidget):
             self.on_text_selected_to_highlight(selected_text, pdf_rect)
 
     def on_text_selected_to_highlight(self, selected_text: str, pdf_rect=None):
-        """Salva o texto selecionado no banco e re-renderiza a página."""
         if not selected_text.strip() or not self.current_pdf_id:
             return
 
@@ -407,13 +442,19 @@ class StudyReaderView(QWidget):
                     block.completed_at = datetime.utcnow()
                     block.time_spent_seconds = (block.time_spent_seconds or 0) + self.elapsed_seconds
                     db.commit()
-            except Exception:
+                    self.elapsed_seconds = 0
+            except Exception as e:
                 db.rollback()
+                print(f"Erro ao salvar conclusão de bloco: {e}")
             finally:
                 db.close()
 
             self.block_status = BlockStatus.CONCLUIDO
             self.pause_timer()
+
+            if self.dont_show_completion_msg:
+                self.load_next_sequential_block()
+                return
 
             msg = QMessageBox(self)
             msg.setIcon(QMessageBox.Information)
@@ -424,10 +465,16 @@ class StudyReaderView(QWidget):
                 "Deseja continuar lendo o próximo bloco deste PDF ou voltar para o ciclo no Dashboard?"
             )
             
+            cb_dont_show = QCheckBox("Não mostrar esta mensagem novamente durante a leitura")
+            msg.setCheckBox(cb_dont_show)
+
             btn_continue = msg.addButton("Continuar Lendo", QMessageBox.AcceptRole)
             msg.addButton("Voltar ao Dashboard", QMessageBox.RejectRole)
             msg.exec()
-            
+
+            if cb_dont_show.isChecked():
+                self.dont_show_completion_msg = True
+
             if msg.clickedButton() == btn_continue:
                 self.load_next_sequential_block()
             else:
@@ -471,145 +518,84 @@ class StudyReaderView(QWidget):
         self.timer.start(1000)
         if self.block_id:
             db = SessionLocal()
-            block = db.query(StudyBlock).filter(StudyBlock.id == self.block_id).first()
-            if block and block.status == BlockStatus.PENDENTE:
-                block.status = BlockStatus.EM_ANDAMENTO
-                self.block_status = BlockStatus.EM_ANDAMENTO
-                if not block.started_at:
-                    block.started_at = datetime.utcnow()
-                db.commit()
-            db.close()
+            try:
+                block = db.query(StudyBlock).filter(StudyBlock.id == self.block_id).first()
+                if block and block.status == BlockStatus.PENDENTE:
+                    block.status = BlockStatus.EM_ANDAMENTO
+                    self.block_status = BlockStatus.EM_ANDAMENTO
+                    if not block.started_at:
+                        block.started_at = datetime.utcnow()
+                    db.commit()
+            except Exception as e:
+                db.rollback()
+                print(f"Erro ao iniciar bloco: {e}")
+            finally:
+                db.close()
+
+    def update_timer(self):
+        self.elapsed_seconds += 1
+        time = QTime(0, 0, 0).addSecs(self.elapsed_seconds)
+        self.lbl_timer.setText(time.toString("hh:mm:ss"))
 
     def pause_timer(self):
         self.timer.stop()
 
-    def update_timer(self):
-        self.elapsed_seconds += 1
-        time_obj = QTime(0, 0, 0).addSecs(self.elapsed_seconds)
-        self.lbl_timer.setText(time_obj.toString("hh:mm:ss"))
-
     def reset_timer(self, confirm=True):
-        if confirm and self.elapsed_seconds > 0:
+        if confirm:
             reply = QMessageBox.question(
-                self, "Descartar Progresso",
-                "Deseja parar o cronômetro e descartar o tempo registrado nesta sessão?",
-                QMessageBox.Yes | QMessageBox.No
+                self, 
+                "Descartar Tempo", 
+                "Deseja resetar o cronômetro para zero e descartar o tempo desta sessão?",
+                QMessageBox.Yes | QMessageBox.No, 
+                QMessageBox.No
             )
-            if reply == QMessageBox.No:
+            if reply != QMessageBox.Yes:
                 return
 
-        self.pause_timer()
+        self.timer.stop()
         self.elapsed_seconds = 0
         self.lbl_timer.setText("00:00:00")
 
     def save_and_pause(self):
-        if not self.block_id:
-            return
-
         self.pause_timer()
-        db = SessionLocal()
-        try:
-            block = db.query(StudyBlock).filter(StudyBlock.id == self.block_id).first()
-            if block:
-                block.current_page = self.current_page + 1
-                block.status = BlockStatus.EM_ANDAMENTO
-                self.block_status = BlockStatus.EM_ANDAMENTO
-                if not block.started_at:
-                    block.started_at = datetime.utcnow()
-                
-                block.time_spent_seconds = (block.time_spent_seconds or 0) + self.elapsed_seconds
-                db.commit()
+        self.save_current_page()
 
-                QMessageBox.information(
-                    self, 
-                    "Progresso Salvo", 
-                    f"Progresso salvo com sucesso!\n\n"
-                    f"• Parou na página: {block.current_page}\n"
-                    f"• Tempo registrado nesta sessão: {self.lbl_timer.text()}\n\n"
-                    f"Você pode retomar de onde parou a qualquer momento."
-                )
-                
-                self.elapsed_seconds = 0
-                self.lbl_timer.setText("00:00:00")
-        except Exception as e:
-            db.rollback()
-            QMessageBox.critical(self, "Erro", f"Erro ao salvar progresso: {str(e)}")
-        finally:
-            db.close()
+        if self.block_id and self.elapsed_seconds > 0:
+            db = SessionLocal()
+            try:
+                block = db.query(StudyBlock).filter(StudyBlock.id == self.block_id).first()
+                if block:
+                    block.time_spent_seconds = (block.time_spent_seconds or 0) + self.elapsed_seconds
+                    db.commit()
+                    self.elapsed_seconds = 0
+            except Exception as e:
+                db.rollback()
+                print(f"Erro ao salvar tempo de estudo: {e}")
+            finally:
+                db.close()
+
+        self.back_requested.emit()
 
     def complete_block(self):
-        if not self.block_id:
-            return
-
         self.pause_timer()
+        self.save_current_page()
+
         db = SessionLocal()
         try:
             block = db.query(StudyBlock).filter(StudyBlock.id == self.block_id).first()
             if block:
                 block.status = BlockStatus.CONCLUIDO
-                self.block_status = BlockStatus.CONCLUIDO
-                block.current_page = self.page_end
                 block.completed_at = datetime.utcnow()
                 block.time_spent_seconds = (block.time_spent_seconds or 0) + self.elapsed_seconds
-                
                 db.commit()
-                QMessageBox.information(
-                    self, 
-                    "Parabéns!", 
-                    f"Bloco de estudo concluído com sucesso!\nTempo registrado: {self.lbl_timer.text()}"
-                )
-                
                 self.elapsed_seconds = 0
-                self.lbl_timer.setText("00:00:00")
+                self.block_status = BlockStatus.CONCLUIDO
         except Exception as e:
             db.rollback()
-            QMessageBox.critical(self, "Erro", f"Erro ao concluir o bloco: {str(e)}")
+            QMessageBox.critical(self, "Erro", f"Erro ao concluir o bloco: {e}")
+            return
         finally:
             db.close()
 
-
-class PDFSelectableLabel(QLabel):
-    area_selected = Signal(QRect)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.origin_point = None
-        self.current_point = None
-        self.is_selecting = False
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.origin_point = event.pos()
-            self.current_point = event.pos()
-            self.is_selecting = True
-            self.update()
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event):
-        if self.is_selecting and (event.buttons() & Qt.LeftButton):
-            self.current_point = event.pos()
-            self.update()
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton and self.is_selecting:
-            self.is_selecting = False
-            selection_rect = QRect(self.origin_point, self.current_point).normalized()
-            self.origin_point = None
-            self.current_point = None
-            self.update()
-
-            if selection_rect.width() > 10 and selection_rect.height() > 10:
-                self.area_selected.emit(selection_rect)
-
-        super().mouseReleaseEvent(event)
-
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        if self.is_selecting and self.origin_point and self.current_point:
-            painter = QPainter(self)
-            rect = QRect(self.origin_point, self.current_point).normalized()
-            
-            painter.setPen(QPen(QColor(255, 215, 0, 200), 1, Qt.DashLine))
-            painter.setBrush(QColor(255, 255, 0, 60))
-            painter.drawRect(rect)
+        QMessageBox.information(self, "Sucesso", "Bloco marcado como concluído!")
+        self.back_requested.emit()

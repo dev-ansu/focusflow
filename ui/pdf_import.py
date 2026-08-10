@@ -7,7 +7,7 @@ from models.models import Subject
 from services.pdf_parser import PDFParser
 
 class PDFImportView(QWidget):
-    import_requested = Signal(str, int)  # Emite file_path, subject_id
+    import_requested = Signal(list, int)  # <--- Emite (lista_de_file_paths, subject_id)
 
     def __init__(self):
         super().__init__()
@@ -20,7 +20,7 @@ class PDFImportView(QWidget):
         layout.setContentsMargins(15, 15, 15, 15)
         layout.setSpacing(15)
 
-        lbl_title = QLabel("📥 Importar PDFs de Preparatórios")
+        lbl_title = QLabel("📥 Importar PDFs em Lote")
         lbl_title.setStyleSheet("color: #FFFFFF; font-size: 20px; font-weight: bold;")
         layout.addWidget(lbl_title)
 
@@ -67,8 +67,8 @@ class PDFImportView(QWidget):
 
         layout.addLayout(subj_layout)
 
-        # Área de Drag & Drop / Botão de Seleção
-        self.drop_area = QLabel("Arraste e solte os arquivos PDF aqui\nou clique no botão abaixo")
+        # Área de Drag & Drop
+        self.drop_area = QLabel("Arraste e solte múltiplos arquivos PDF aqui\nou clique no botão abaixo")
         self.drop_area.setAlignment(Qt.AlignCenter)
         self.drop_area.setStyleSheet("""
             QLabel {
@@ -129,7 +129,7 @@ class PDFImportView(QWidget):
         # Ações na Fila (Remover / Prosseguir)
         action_layout = QHBoxLayout()
 
-        btn_remove = QPushButton("❌ Remover PDF Selecionado")
+        btn_remove = QPushButton("❌ Remover Selecionado")
         btn_remove.setStyleSheet("""
             QPushButton {
                 background-color: #E74C3C;
@@ -144,9 +144,24 @@ class PDFImportView(QWidget):
         btn_remove.clicked.connect(self.remove_selected_file)
         action_layout.addWidget(btn_remove)
 
+        btn_clear = QPushButton("🗑️ Limpar Lista")
+        btn_clear.setStyleSheet("""
+            QPushButton {
+                background-color: #7F8C8D;
+                color: white;
+                padding: 8px 15px;
+                border-radius: 5px;
+                font-weight: bold;
+            }
+            QPushButton:hover { background-color: #95A5A6; }
+        """)
+        btn_clear.setCursor(Qt.PointingHandCursor)
+        btn_clear.clicked.connect(self.clear_all_files)
+        action_layout.addWidget(btn_clear)
+
         action_layout.addStretch()
 
-        self.btn_proceed = QPushButton("Avançar para Detecção de Sumário ➔")
+        self.btn_proceed = QPushButton("Avançar para Revisão dos PDFs ➔")
         self.btn_proceed.setStyleSheet("""
             QPushButton {
                 background-color: #2ECC71;
@@ -167,7 +182,6 @@ class PDFImportView(QWidget):
         self.refresh_subjects()
 
     def refresh_subjects(self):
-        """Recarrega as matérias cadastradas no banco de dados."""
         current_id = self.cmb_subject.currentData()
         self.cmb_subject.clear()
         db = SessionLocal()
@@ -184,7 +198,6 @@ class PDFImportView(QWidget):
         db.close()
 
     def create_new_subject(self):
-        """Permite cadastrar uma nova matéria diretamente da tela de importação."""
         text, ok = QInputDialog.getText(self, "Nova Matéria", "Nome da Matéria:")
         if ok and text.strip():
             db = SessionLocal()
@@ -237,6 +250,10 @@ class PDFImportView(QWidget):
         del self.selected_files[current_row]
         self.table.removeRow(current_row)
 
+    def clear_all_files(self):
+        self.selected_files.clear()
+        self.table.setRowCount(0)
+
     def proceed(self):
         if not self.selected_files:
             QMessageBox.warning(self, "Aviso", "Selecione pelo menos um PDF na lista.")
@@ -246,9 +263,12 @@ class PDFImportView(QWidget):
             return
 
         subject_id = self.cmb_subject.currentData()
-        self.import_requested.emit(self.selected_files[0], subject_id)
+        # Envia a LISTA completa de arquivos selecionados
+        self.import_requested.emit(self.selected_files.copy(), subject_id)
         
+        # Limpa a fila após emitir
+        self.clear_all_files()
+
     def showEvent(self, event):
-        """Disparado automaticamente sempre que a view é exibida na tela."""
         super().showEvent(event)
         self.refresh_subjects()

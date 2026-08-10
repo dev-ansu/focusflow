@@ -47,7 +47,7 @@ class Topic(Base):
     title = Column(String(255), nullable=False)
     page_start = Column(Integer, nullable=False)
     page_end = Column(Integer, nullable=False)
-    
+    order = Column(Integer, default=0)
     pdf = relationship("PdfDocument", back_populates="topics")
     parent = relationship("Topic", remote_side=[id], backref="subtopics")
     blocks = relationship("StudyBlock", back_populates="topic", cascade="all, delete-orphan")

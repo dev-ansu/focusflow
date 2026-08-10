@@ -1,11 +1,22 @@
 import os
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
-                             QPushButton, QLabel, QInputDialog, QMessageBox, QTreeWidget, 
-                             QTreeWidgetItem, QFileDialog, QHeaderView, QFrame)
+                               QPushButton, QLabel, QInputDialog, QMessageBox, QTreeWidget, 
+                               QTreeWidgetItem, QFileDialog, QHeaderView, QAbstractItemView)
 from PySide6.QtCore import Qt
 import pymupdf as fitz
 from database.connection import SessionLocal
 from models.models import Subject, Topic, StudyBlock, BlockStatus, PdfDocument
+
+
+class OrderableTreeWidget(QTreeWidget):
+    """QTreeWidget customizado que detecta a soltura de itens para salvar a nova ordem no DB."""
+    def __init__(self, parent_view):
+        super().__init__()
+        self.parent_view = parent_view
+
+    def dropEvent(self, event):
+        super().dropEvent(event)
+        self.parent_view.save_topics_order()
 
 
 class SubjectView(QWidget):
@@ -91,10 +102,18 @@ class SubjectView(QWidget):
         self.lbl_title.setStyleSheet("color: #FFFFFF; font-size: 18px;")
         right_layout.addWidget(self.lbl_title)
 
-        self.tree_topics = QTreeWidget()
+        # Árvore de Tópicos com Suporte a Drag and Drop
+        self.tree_topics = OrderableTreeWidget(self)
         self.tree_topics.setHeaderLabels(["Tópico / Bloco", "Status / Páginas"])
         self.tree_topics.header().setSectionResizeMode(0, QHeaderView.Stretch)
         self.tree_topics.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        
+        # Configuração do Drag and Drop
+        self.tree_topics.setDragEnabled(True)
+        self.tree_topics.setAcceptDrops(True)
+        self.tree_topics.setDropIndicatorShown(True)
+        self.tree_topics.setDragDropMode(QAbstractItemView.InternalMove)
+
         self.tree_topics.setStyleSheet("""
             QTreeWidget {
                 background-color: #1E222A;
@@ -126,45 +145,32 @@ class SubjectView(QWidget):
         # --- BARRA DE AÇÕES DA MATÉRIA / TÓPICOS ---
         action_layout = QHBoxLayout()
 
-        btn_import_pdf = QPushButton("📄 Importar PDF e Gerar Blocos")
-        btn_import_pdf.setStyleSheet("""
-            QPushButton {
-                background-color: #2ECC71;
-                color: white;
-                font-weight: bold;
-                padding: 8px 12px;
-                border-radius: 5px;
-            }
-            QPushButton:hover { background-color: #27AE60; }
-        """)
+        btn_move_up = QPushButton("⬆️ Cima")
+        btn_move_up.setStyleSheet("QPushButton { background-color: #34495E; color: white; padding: 8px; border-radius: 5px; } QPushButton:hover { background-color: #4E6E8E; }")
+        btn_move_up.setCursor(Qt.PointingHandCursor)
+        btn_move_up.clicked.connect(lambda: self.move_topic(-1))
+        action_layout.addWidget(btn_move_up)
+
+        btn_move_down = QPushButton("⬇️ Baixo")
+        btn_move_down.setStyleSheet("QPushButton { background-color: #34495E; color: white; padding: 8px; border-radius: 5px; } QPushButton:hover { background-color: #4E6E8E; }")
+        btn_move_down.setCursor(Qt.PointingHandCursor)
+        btn_move_down.clicked.connect(lambda: self.move_topic(1))
+        action_layout.addWidget(btn_move_down)
+
+        btn_import_pdf = QPushButton("📄 Importar PDF")
+        btn_import_pdf.setStyleSheet("QPushButton { background-color: #2ECC71; color: white; font-weight: bold; padding: 8px 12px; border-radius: 5px; } QPushButton:hover { background-color: #27AE60; }")
         btn_import_pdf.setCursor(Qt.PointingHandCursor)
         btn_import_pdf.clicked.connect(self.import_pdf_and_generate_blocks)
         action_layout.addWidget(btn_import_pdf)
 
         btn_delete_topic = QPushButton("🗑️ Apagar Tópico")
-        btn_delete_topic.setStyleSheet("""
-            QPushButton {
-                background-color: #E74C3C;
-                color: white;
-                padding: 8px 12px;
-                border-radius: 5px;
-            }
-            QPushButton:hover { background-color: #C0392B; }
-        """)
+        btn_delete_topic.setStyleSheet("QPushButton { background-color: #E74C3C; color: white; padding: 8px 12px; border-radius: 5px; } QPushButton:hover { background-color: #C0392B; }")
         btn_delete_topic.setCursor(Qt.PointingHandCursor)
         btn_delete_topic.clicked.connect(self.delete_selected_topic)
         action_layout.addWidget(btn_delete_topic)
 
         btn_reset_progress = QPushButton("🔄 Zerar Progresso")
-        btn_reset_progress.setStyleSheet("""
-            QPushButton {
-                background-color: #E67E22;
-                color: white;
-                padding: 8px 12px;
-                border-radius: 5px;
-            }
-            QPushButton:hover { background-color: #D35400; }
-        """)
+        btn_reset_progress.setStyleSheet("QPushButton { background-color: #E67E22; color: white; padding: 8px 12px; border-radius: 5px; } QPushButton:hover { background-color: #D35400; }")
         btn_reset_progress.setCursor(Qt.PointingHandCursor)
         btn_reset_progress.clicked.connect(self.reset_subject_progress)
         action_layout.addWidget(btn_reset_progress)
@@ -261,17 +267,19 @@ class SubjectView(QWidget):
 
         self.lbl_title.setText(f"<b style='color: #3498DB;'>{subj.name}</b> <span style='color: #BDC3C7;'>- Tópicos e PDFs</span>")
 
-        topics = (
-            db.query(Topic)
-            .join(PdfDocument)
-            .filter(PdfDocument.subject_id == subject_id, Topic.parent_id.is_(None))
-            .all()
-        )
+        # Tenta ordenar pelo campo 'order' se existir na Model, caso contrário usa ID
+        query = db.query(Topic).join(PdfDocument).filter(PdfDocument.subject_id == subject_id, Topic.parent_id.is_(None))
+        if hasattr(Topic, 'order'):
+            topics = query.order_by(Topic.order.asc(), Topic.id.asc()).all()
+        else:
+            topics = query.order_by(Topic.id.asc()).all()
         
         def add_nodes(parent_item, topic_list):
             for t in topic_list:
                 item = QTreeWidgetItem([f"🔖 {t.title}", ""])
                 item.setData(0, Qt.UserRole, t.id)
+                # Define flag indicando que é um Tópico
+                item.setData(0, Qt.UserRole + 1, "TOPIC")
                 
                 blocks = db.query(StudyBlock).filter(StudyBlock.topic_id == t.id).order_by(StudyBlock.page_start.asc()).all()
                 if blocks:
@@ -286,6 +294,7 @@ class SubjectView(QWidget):
                             status_str = "✅ Concluído"
 
                         block_item = QTreeWidgetItem([f"   ↳ Bloco (Págs {page_start} - {page_end})", status_str])
+                        block_item.setData(0, Qt.UserRole + 1, "BLOCK")
                         item.addChild(block_item)
 
                 if parent_item:
@@ -293,7 +302,12 @@ class SubjectView(QWidget):
                 else:
                     self.tree_topics.addTopLevelItem(item)
 
-                subtopics = db.query(Topic).filter(Topic.parent_id == t.id).all()
+                sub_query = db.query(Topic).filter(Topic.parent_id == t.id)
+                if hasattr(Topic, 'order'):
+                    subtopics = sub_query.order_by(Topic.order.asc(), Topic.id.asc()).all()
+                else:
+                    subtopics = sub_query.all()
+
                 if subtopics:
                     add_nodes(item, subtopics)
 
@@ -301,8 +315,51 @@ class SubjectView(QWidget):
         self.tree_topics.expandAll()
         db.close()
 
+    def move_topic(self, direction):
+        """Move o tópico selecionado para cima (-1) ou para baixo (+1)."""
+        current_item = self.tree_topics.currentItem()
+        if not current_item or current_item.data(0, Qt.UserRole + 1) != "TOPIC":
+            return
+
+        parent = current_item.parent()
+        if parent:
+            index = parent.indexOfChild(current_item)
+            new_index = index + direction
+            if 0 <= new_index < parent.childCount():
+                taken = parent.takeChild(index)
+                parent.insertChild(new_index, taken)
+                self.tree_topics.setCurrentItem(taken)
+                self.save_topics_order()
+        else:
+            index = self.tree_topics.indexOfTopLevelItem(current_item)
+            new_index = index + direction
+            if 0 <= new_index < self.tree_topics.topLevelItemCount():
+                taken = self.tree_topics.takeTopLevelItem(index)
+                self.tree_topics.insertTopLevelItem(new_index, taken)
+                self.tree_topics.setCurrentItem(taken)
+                self.save_topics_order()
+
+    def save_topics_order(self):
+        """Salva a nova sequência de exibição dos tópicos no banco de dados."""
+        if not hasattr(Topic, 'order'):
+            return
+
+        db = SessionLocal()
+        try:
+            for i in range(self.tree_topics.topLevelItemCount()):
+                item = self.tree_topics.topLevelItem(i)
+                topic_id = item.data(0, Qt.UserRole)
+                if topic_id:
+                    t = db.query(Topic).filter(Topic.id == topic_id).first()
+                    if t:
+                        t.order = i
+            db.commit()
+        except Exception as e:
+            db.rollback()
+        finally:
+            db.close()
+
     def import_pdf_and_generate_blocks(self):
-        """Permite importar um arquivo PDF e subdividi-lo automaticamente em blocos de estudo."""
         if not self.selected_subject_id:
             QMessageBox.warning(self, "Aviso", "Selecione uma matéria na lista para importar o PDF.")
             return
@@ -320,15 +377,11 @@ class SubjectView(QWidget):
             filename = os.path.basename(file_path)
             topic_title = os.path.splitext(filename)[0]
             
-            # 1. Obtém o tamanho do arquivo em bytes
             file_size_bytes = os.path.getsize(file_path)
-
-            # 2. Abre o PDF para contar páginas reais
             doc = fitz.open(file_path)
             total_pages = len(doc)
             doc.close()
 
-            # 3. Registra o Documento PDF
             pdf_doc = PdfDocument(
                 subject_id=self.selected_subject_id,
                 title=topic_title,
@@ -339,17 +392,26 @@ class SubjectView(QWidget):
             db.add(pdf_doc)
             db.flush()
 
-            # 4. Cria o Tópico Principal vinculado ao PDF (com page_start e page_end)
-            topic = Topic(
-                pdf_id=pdf_doc.id, 
-                title=topic_title,
-                page_start=1,
-                page_end=total_pages
-            )
+            # Define a ordem como a maior ordem atual + 1
+            max_order = 0
+            if hasattr(Topic, 'order'):
+                last_t = db.query(Topic).order_by(Topic.order.desc()).first()
+                if last_t and last_t.order is not None:
+                    max_order = last_t.order + 1
+
+            topic_kwargs = {
+                "pdf_id": pdf_doc.id,
+                "title": topic_title,
+                "page_start": 1,
+                "page_end": total_pages
+            }
+            if hasattr(Topic, 'order'):
+                topic_kwargs["order"] = max_order
+
+            topic = Topic(**topic_kwargs)
             db.add(topic)
             db.flush()
 
-            # 5. Gera os blocos de estudo sequenciais
             start_p = 1
             while start_p <= total_pages:
                 end_p = min(start_p + pages_per_block - 1, total_pages)
@@ -385,7 +447,7 @@ class SubjectView(QWidget):
             return
 
         topic_id = current_item.data(0, Qt.UserRole)
-        if not topic_id:
+        if not topic_id or current_item.data(0, Qt.UserRole + 1) != "TOPIC":
             QMessageBox.warning(self, "Aviso", "Selecione um tópico principal para apagar (não um bloco).")
             return
 

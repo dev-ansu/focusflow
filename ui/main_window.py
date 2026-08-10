@@ -1,4 +1,4 @@
-from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QStackedWidget
+from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QStackedWidget, QMessageBox
 from PySide6.QtCore import Qt
 
 from ui.dashboard import DashboardView
@@ -18,6 +18,11 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("EstudoFlow - Organização de Estudos")
         self.resize(1024, 700)
+
+        # Controle da Fila de Importação em Lote
+        self.import_queue = []
+        self.current_import_subject_id = None
+        self.total_imports = 0
 
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
@@ -92,7 +97,31 @@ class MainWindow(QMainWindow):
             self.subj_view.refresh()
         self.stack.setCurrentIndex(index)
 
-    def handle_import(self, file_path: str, subject_id: int):
+    def handle_import(self, file_paths: list, subject_id: int):
+        """Recebe a lista de caminhos de PDFs e inicia o processamento em lote."""
+        self.import_queue = file_paths.copy()
+        self.current_import_subject_id = subject_id
+        self.total_imports = len(file_paths)
+        
+        # Inicia a fila
+        self.process_next_pdf_in_queue()
+
+    def process_next_pdf_in_queue(self):
+        """Processa um PDF por vez na fila. Quando a fila esvazia, retorna ao Dashboard."""
+        if not self.import_queue:
+            QMessageBox.information(
+                self, 
+                "Importação Concluída", 
+                f"Todos os {self.total_imports} PDF(s) foram processados e importados com sucesso!"
+            )
+            self.switch_view(0)  # Volta para o Dashboard
+            return
+
+        # Retira o próximo arquivo PDF (string) da lista
+        file_path = self.import_queue.pop(0)
+        current_index = self.total_imports - len(self.import_queue)
+
+        # Extrai as informações e o sumário do PDF atual
         info = PDFParser.get_info(file_path)
         toc_pages, confidence = TOCDetector.detect_toc_pages(file_path)
         
@@ -100,9 +129,15 @@ class MainWindow(QMainWindow):
         if toc_pages:
             topics = TopicParser.parse_toc(file_path, toc_pages, info["pages"])
 
-        # Cria a view de revisão dinamicamente
-        review_view = TOCReviewView(file_path, subject_id, topics)
-        review_view.completed.connect(lambda: self.switch_view(0))
+        # Instancia a tela de revisão para o PDF atual
+        review_view = TOCReviewView(file_path, self.current_import_subject_id, topics)
+        
+        # Se a TOCReviewView implementar indicação de progresso, atualiza o cabeçalho
+        if hasattr(review_view, 'set_progress_info'):
+            review_view.set_progress_info(current_index, self.total_imports)
+
+        # Quando o usuário confirmar a revisão deste PDF, processa o próximo da fila
+        review_view.completed.connect(self.process_next_pdf_in_queue)
         
         self.stack.addWidget(review_view)
         self.stack.setCurrentWidget(review_view)

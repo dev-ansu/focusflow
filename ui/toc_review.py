@@ -2,7 +2,6 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTreeWidget,
                              QTreeWidgetItem, QPushButton, QLabel, QMessageBox, 
                              QSpinBox, QComboBox, QFrame, QHeaderView)
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QIcon
 from database.connection import SessionLocal
 from models.models import PdfDocument, Topic
 from services.study_manager import StudyManager
@@ -18,7 +17,6 @@ class TOCReviewView(QWidget):
         self.init_ui()
 
     def init_ui(self):
-        # Container principal com fundo escuro
         self.setStyleSheet("background-color: #121418; color: #ECF0F1;")
         
         main_layout = QVBoxLayout(self)
@@ -41,19 +39,19 @@ class TOCReviewView(QWidget):
         lbl_title = QLabel("📚 Revisão da Estrutura do Sumário")
         lbl_title.setStyleSheet("font-size: 18px; font-weight: bold; color: #FFFFFF; border: none;")
         
-        lbl_subtitle = QLabel("Ajuste os títulos e os limites de páginas detectados antes de gerar os blocos de estudo.")
-        lbl_subtitle.setStyleSheet("font-size: 12px; color: #BDC3C7; border: none;")
-        lbl_subtitle.setWordWrap(True)
+        # Armazenado em self.lbl_subtitle para poder ser modificado dinamicamente no lote
+        self.lbl_subtitle = QLabel("Ajuste os títulos e os limites de páginas detectados antes de gerar os blocos de estudo.")
+        self.lbl_subtitle.setStyleSheet("font-size: 12px; color: #BDC3C7; border: none;")
+        self.lbl_subtitle.setWordWrap(True)
 
         header_layout.addWidget(lbl_title)
-        header_layout.addWidget(lbl_subtitle)
+        header_layout.addWidget(self.lbl_subtitle)
         main_layout.addWidget(header_card)
 
         # --- TABELA / TREE WIDGET DE TÓPICOS ---
         self.tree = QTreeWidget()
         self.tree.setHeaderLabels(["Tópico / Capítulo", "Pág. Inicial", "Pág. Final"])
         
-        # Ajuste de proporção das colunas
         self.tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         self.tree.header().setSectionResizeMode(1, QHeaderView.Fixed)
         self.tree.header().setSectionResizeMode(2, QHeaderView.Fixed)
@@ -97,7 +95,7 @@ class TOCReviewView(QWidget):
 
         self.populate_tree()
 
-        # --- CONTROLES DE EDIÇÃO DA ÁRVORE (Adicionar / Remover) ---
+        # --- CONTROLES DE EDIÇÃO DA ÁRVORE ---
         tree_actions_layout = QHBoxLayout()
         
         btn_add = QPushButton("➕ Adicionar Tópico")
@@ -179,7 +177,7 @@ class TOCReviewView(QWidget):
         config_layout.addStretch()
         main_layout.addWidget(config_card)
 
-        # --- BOTAO PRINCIPAL DE SALVAR ---
+        # --- BOTÃO PRINCIPAL DE SALVAR ---
         btn_confirm = QPushButton("🚀 Confirmar e Gerar Blocos")
         btn_confirm.setCursor(Qt.PointingHandCursor)
         btn_confirm.setStyleSheet("""
@@ -198,6 +196,14 @@ class TOCReviewView(QWidget):
         btn_confirm.clicked.connect(self.save)
         
         main_layout.addWidget(btn_confirm)
+
+    def set_progress_info(self, current: int, total: int):
+        """Atualiza a legenda do cabeçalho indicando o progresso do lote."""
+        if total > 1:
+            self.lbl_subtitle.setText(
+                f"<span style='color: #3498DB; font-weight: bold;'>[PDF {current} de {total}]</span> "
+                f"Ajuste os títulos e limites de páginas antes de gerar os blocos."
+            )
 
     def populate_tree(self):
         self.tree.clear()

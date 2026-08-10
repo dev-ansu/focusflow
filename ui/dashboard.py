@@ -152,8 +152,22 @@ class DashboardView(QWidget):
     def refresh(self):
         db = SessionLocal()
         try:
-            # 1. Atualiza o bloco recomendado do ciclo geral
-            next_block = StudyManager.get_next_block_to_study(db)
+            # 1. Atualiza o bloco recomendado ordenando pelo campo 'order' do Tópico
+            # (Em vez de buscar apenas o padrão, garantimos a sequência pela hierarquia)
+            next_block = (
+                db.query(StudyBlock)
+                .join(Topic)
+                .join(PdfDocument)
+                .filter(StudyBlock.status.in_([BlockStatus.EM_ANDAMENTO, BlockStatus.PENDENTE]))
+                .order_by(
+                    # Dá prioridade ao bloco que já começou
+                    StudyBlock.status == BlockStatus.PENDENTE,  # EM_ANDAMENTO vem primeiro (False < True)
+                    Topic.order.asc(),                          # Respeita a ordem cadastrada
+                    StudyBlock.id.asc()                         # Desempate pelo ID
+                )
+                .first()
+            )
+
             if next_block:
                 self.current_block_id = next_block.id
                 subj_name = next_block.topic.pdf.subject.name
@@ -174,7 +188,7 @@ class DashboardView(QWidget):
                 self.lbl_info.setText("Parabéns! Todos os blocos cadastrados foram concluídos.")
                 self.btn_start.setEnabled(False)
 
-            # 2. Limpa e renderiza novamente a lista por matéria
+            # 2. Limpa e renderiza a lista por matéria (continua idêntico)
             for i in reversed(range(self.prog_layout.count())): 
                 item = self.prog_layout.itemAt(i)
                 if item.widget():
@@ -192,13 +206,11 @@ class DashboardView(QWidget):
 
                 row = QHBoxLayout()
                 
-                # Nome da matéria
                 lbl = QLabel(s.name)
                 lbl.setMinimumWidth(150)
                 lbl.setStyleSheet("font-weight: bold; color: #ECF0F1;")
                 row.addWidget(lbl)
                 
-                # Barra de Progresso
                 bar = QProgressBar()
                 bar.setValue(pct)
                 bar.setStyleSheet("""
@@ -217,7 +229,6 @@ class DashboardView(QWidget):
                 """)
                 row.addWidget(bar)
                 
-                # Botão de iniciar sessão específica desta matéria
                 btn_study_subj = QPushButton("Estudar ➔")
                 btn_study_subj.setCursor(Qt.PointingHandCursor)
                 btn_study_subj.setStyleSheet("""
@@ -237,7 +248,6 @@ class DashboardView(QWidget):
                     }
                 """)
                 
-                # --- TRATAMENTO DOS TRÊS ESTADOS DAS MATÉRIAS ---
                 if total_blocks == 0:
                     btn_study_subj.setDisabled(True)
                     btn_study_subj.setText("Sem Blocos")
@@ -253,24 +263,35 @@ class DashboardView(QWidget):
                 container.setLayout(row)
                 self.prog_layout.addWidget(container)
 
-            # Adiciona um alinhamento ao topo para que as linhas não se espaçem excessivamente quando existirem poucas matérias
             self.prog_layout.addStretch()
 
         finally:
             db.close()
 
     def start_subject_study(self, subject_id):
-        """Busca o próximo bloco pendente/em andamento DESTA matéria específica."""
+        """Busca o próximo bloco pendente/em andamento DESTA matéria seguindo a ordem dos tópicos."""
         db = SessionLocal()
         try:
-            block = db.query(StudyBlock).join(Topic).join(PdfDocument)\
-                .filter(PdfDocument.subject_id == subject_id, StudyBlock.status == BlockStatus.EM_ANDAMENTO)\
-                .order_by(StudyBlock.id.asc()).first()
+            # Primeiro tenta pegar um bloco que já esteja EM ANDAMENTO nessa matéria
+            block = (
+                db.query(StudyBlock)
+                .join(Topic)
+                .join(PdfDocument)
+                .filter(PdfDocument.subject_id == subject_id, StudyBlock.status == BlockStatus.EM_ANDAMENTO)
+                .order_by(Topic.order.asc(), StudyBlock.id.asc())
+                .first()
+            )
             
+            # Se não houver nenhum em andamento, pega o primeiro PENDENTE na ordem dos tópicos
             if not block:
-                block = db.query(StudyBlock).join(Topic).join(PdfDocument)\
-                    .filter(PdfDocument.subject_id == subject_id, StudyBlock.status == BlockStatus.PENDENTE)\
-                    .order_by(StudyBlock.id.asc()).first()
+                block = (
+                    db.query(StudyBlock)
+                    .join(Topic)
+                    .join(PdfDocument)
+                    .filter(PdfDocument.subject_id == subject_id, StudyBlock.status == BlockStatus.PENDENTE)
+                    .order_by(Topic.order.asc(), StudyBlock.id.asc())
+                    .first()
+                )
 
             if block:
                 self.start_study_signal.emit(block.id)
