@@ -1,10 +1,28 @@
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTreeWidget, 
                              QTreeWidgetItem, QPushButton, QLabel, QMessageBox, 
-                             QSpinBox, QComboBox, QFrame, QHeaderView)
+                             QSpinBox, QComboBox, QFrame, QHeaderView,
+                             QStyledItemDelegate, QLineEdit)
+from PySide6.QtGui import QIntValidator
 from PySide6.QtCore import Qt, Signal
 from database.connection import SessionLocal
 from models.models import PdfDocument, Topic
 from services.study_manager import StudyManager
+from services.pdf_parser import PDFParser
+
+
+class MaxPageDelegate(QStyledItemDelegate):
+    """Delegate que limita a digitação até o número máximo de páginas do PDF."""
+    def __init__(self, parent=None, max_pages=99999):
+        super().__init__(parent)
+        self.max_pages = max_pages
+
+    def createEditor(self, parent, option, index):
+        editor = QLineEdit(parent)
+        # Permite apenas números inteiros entre 1 e o total de páginas do PDF
+        validator = QIntValidator(1, self.max_pages, editor)
+        editor.setValidator(validator)
+        return editor
+
 
 class TOCReviewView(QWidget):
     completed = Signal()
@@ -14,6 +32,15 @@ class TOCReviewView(QWidget):
         self.file_path = file_path
         self.subject_id = subject_id
         self.detected_topics = detected_topics
+        
+        # Obtém os metadados do PDF antecipadamente para saber o total real de páginas
+        try:
+            self.pdf_info = PDFParser.get_info(self.file_path)
+            self.total_pages = self.pdf_info.get("pages", 99999)
+        except Exception:
+            self.total_pages = 99999
+            self.pdf_info = {}
+
         self.init_ui()
 
     def init_ui(self):
@@ -39,8 +66,10 @@ class TOCReviewView(QWidget):
         lbl_title = QLabel("📚 Revisão da Estrutura do Sumário")
         lbl_title.setStyleSheet("font-size: 18px; font-weight: bold; color: #FFFFFF; border: none;")
         
-        # Armazenado em self.lbl_subtitle para poder ser modificado dinamicamente no lote
-        self.lbl_subtitle = QLabel("Ajuste os títulos e os limites de páginas detectados antes de gerar os blocos de estudo.")
+        # Exibe o total de páginas do documento para orientar o usuário
+        self.lbl_subtitle = QLabel(
+            f"Ajuste os tópicos (PDF com {self.total_pages} pág(s)). Nenhuma página pode exceder esse limite."
+        )
         self.lbl_subtitle.setStyleSheet("font-size: 12px; color: #BDC3C7; border: none;")
         self.lbl_subtitle.setWordWrap(True)
 
@@ -59,6 +88,11 @@ class TOCReviewView(QWidget):
         self.tree.setColumnWidth(2, 100)
         self.tree.setAnimated(True)
         self.tree.setIndentation(15)
+
+        # APLICAÇÃO DO DELEGATE COM LIMITE MÁXIMO DE PÁGINAS DO PDF
+        numeric_delegate = MaxPageDelegate(self.tree, max_pages=self.total_pages)
+        self.tree.setItemDelegateForColumn(1, numeric_delegate)
+        self.tree.setItemDelegateForColumn(2, numeric_delegate)
 
         self.tree.setStyleSheet("""
             QTreeWidget {
@@ -170,8 +204,9 @@ class TOCReviewView(QWidget):
 
         config_layout.addWidget(QLabel("Págs. por Bloco:"))
         self.spn_pages = QSpinBox()
-        self.spn_pages.setRange(5, 100)
-        self.spn_pages.setValue(15)
+        # Limita o número de páginas por bloco ao máximo existente no PDF
+        self.spn_pages.setRange(1, self.total_pages)
+        self.spn_pages.setValue(min(15, self.total_pages))
         config_layout.addWidget(self.spn_pages)
 
         config_layout.addStretch()
@@ -202,18 +237,26 @@ class TOCReviewView(QWidget):
         if total > 1:
             self.lbl_subtitle.setText(
                 f"<span style='color: #3498DB; font-weight: bold;'>[PDF {current} de {total}]</span> "
-                f"Ajuste os títulos e limites de páginas antes de gerar os blocos."
+                f"Ajuste os tópicos (PDF com {self.total_pages} pág(s)). Nenhuma página pode exceder esse limite."
             )
 
     def populate_tree(self):
         self.tree.clear()
         for t in self.detected_topics:
-            item = QTreeWidgetItem([t["title"], str(t["page_start"]), str(t["page_end"])])
+            # Clampa os limites detectados ao máximo real do PDF caso a detecção automática falhe
+            p_start = min(max(1, t["page_start"]), self.total_pages)
+            p_end = min(max(p_start, t["page_end"]), self.total_pages)
+
+            item = QTreeWidgetItem([t["title"], str(p_start), str(p_end)])
             item.setFlags(item.flags() | Qt.ItemIsEditable)
             self.tree.addTopLevelItem(item)
 
     def add_topic(self):
-        item = QTreeWidgetItem(["Novo Tópico", "1", "10"])
+        """Adiciona um novo tópico garantindo que não ultrapasse o total de páginas do PDF."""
+        p_start = str(min(1, self.total_pages))
+        p_end = str(min(10, self.total_pages))
+        
+        item = QTreeWidgetItem(["Novo Tópico", p_start, p_end])
         item.setFlags(item.flags() | Qt.ItemIsEditable)
         self.tree.addTopLevelItem(item)
         self.tree.setCurrentItem(item)
@@ -226,8 +269,7 @@ class TOCReviewView(QWidget):
     def save(self):
         db = SessionLocal()
         try:
-            from services.pdf_parser import PDFParser
-            info = PDFParser.get_info(self.file_path)
+            info = self.pdf_info or PDFParser.get_info(self.file_path)
 
             pdf_doc = PdfDocument(
                 subject_id=self.subject_id,
@@ -242,11 +284,58 @@ class TOCReviewView(QWidget):
             mode_str = "topic" if self.cmb_mode.currentIndex() == 0 else "pages"
 
             root = self.tree.invisibleRootItem()
+            
+            if root.childCount() == 0:
+                QMessageBox.warning(self, "Aviso", "Você precisa ter pelo menos um tópico cadastrado.")
+                db.rollback()
+                return
+
             for i in range(root.childCount()):
                 item = root.child(i)
-                title = item.text(0)
-                p_start = int(item.text(1))
-                p_end = int(item.text(2))
+                title = item.text(0).strip() or f"Tópico {i+1}"
+                
+                str_start = item.text(1).strip()
+                str_end = item.text(2).strip()
+
+                # 1. Validação de formato
+                if not str_start.isdigit() or not str_end.isdigit():
+                    QMessageBox.warning(
+                        self, "Erro de Validação", 
+                        f"As páginas do tópico '{title}' devem ser números inteiros."
+                    )
+                    db.rollback()
+                    return
+
+                p_start = int(str_start)
+                p_end = int(str_end)
+
+                # 2. Validação se excede o limite real do PDF
+                if p_start > self.total_pages or p_end > self.total_pages:
+                    QMessageBox.critical(
+                        self, "Limite de Páginas Excedido", 
+                        f"O tópico '{title}' possui páginas (de {p_start} a {p_end}) que ultrapassam "
+                        f"o total de páginas do PDF ({self.total_pages} páginas)."
+                    )
+                    db.rollback()
+                    return
+
+                # 3. Validação de consistência do intervalo
+                if p_start < 1 or p_end < 1:
+                    QMessageBox.warning(
+                        self, "Erro de Validação", 
+                        f"No tópico '{title}', as páginas devem ser maiores ou iguais a 1."
+                    )
+                    db.rollback()
+                    return
+
+                if p_start > p_end:
+                    QMessageBox.warning(
+                        self, "Erro de Validação", 
+                        f"No tópico '{title}', a página inicial ({p_start}) não pode ser "
+                        f"maior do que a página final ({p_end})."
+                    )
+                    db.rollback()
+                    return
 
                 topic = Topic(
                     pdf_id=pdf_doc.id,
@@ -258,7 +347,9 @@ class TOCReviewView(QWidget):
                 db.flush()
 
                 # Gera blocos automaticamente
-                StudyManager.create_blocks_for_topic(db, topic.id, mode=mode_str, pages_per_block=self.spn_pages.value())
+                StudyManager.create_blocks_for_topic(
+                    db, topic.id, mode=mode_str, pages_per_block=self.spn_pages.value()
+                )
 
             db.commit()
             QMessageBox.information(self, "Sucesso", "PDF e tópicos importados com sucesso!")

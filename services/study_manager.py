@@ -147,7 +147,6 @@ class StudyManager:
         db.commit()
 
     @staticmethod
-    @staticmethod
     def add_highlight(
         db, 
         pdf_id: int, 
