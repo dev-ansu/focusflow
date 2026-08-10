@@ -145,6 +145,23 @@ class SubjectView(QWidget):
         # --- BARRA DE AÇÕES DA MATÉRIA / TÓPICOS ---
         action_layout = QHBoxLayout()
 
+        btn_export_notes = QPushButton("📝 Exportar Anotações")
+        btn_export_notes.setStyleSheet("""
+            QPushButton { 
+                background-color: #9B59B6; 
+                color: white; 
+                font-weight: bold; 
+                padding: 8px 12px; 
+                border-radius: 5px; 
+            } 
+            QPushButton:hover { 
+                background-color: #8E44AD; 
+            }
+        """)
+        btn_export_notes.setCursor(Qt.PointingHandCursor)
+        btn_export_notes.clicked.connect(self.export_notes)
+        action_layout.addWidget(btn_export_notes)
+
         btn_move_up = QPushButton("⬆️ Cima")
         btn_move_up.setStyleSheet("QPushButton { background-color: #34495E; color: white; padding: 8px; border-radius: 5px; } QPushButton:hover { background-color: #4E6E8E; }")
         btn_move_up.setCursor(Qt.PointingHandCursor)
@@ -179,6 +196,104 @@ class SubjectView(QWidget):
         layout.addLayout(right_layout, stretch=2.5)
 
         self.refresh()
+    
+    def export_notes(self):
+        """Exporta as anotações em formato TXT/Markdown por Tópico ou Matéria Inteira."""
+        if not self.selected_subject_id:
+            QMessageBox.warning(self, "Aviso", "Selecione uma matéria para exportar as anotações.")
+            return
+
+        db = SessionLocal()
+        try:
+            current_item = self.tree_topics.currentItem()
+            selected_topic_id = None
+            
+            if current_item and current_item.data(0, Qt.UserRole + 1) == "TOPIC":
+                selected_topic_id = current_item.data(0, Qt.UserRole)
+
+            subj = db.query(Subject).filter(Subject.id == self.selected_subject_id).first()
+            if not subj:
+                return
+
+            # Pergunta onde salvar o arquivo
+            default_filename = f"Anotacoes_{subj.name}.txt" if not selected_topic_id else "Anotacoes_Topico.txt"
+            file_path, _ = QFileDialog.getSaveFileName(
+                self, 
+                "Exportar Anotações", 
+                default_filename, 
+                "Arquivo de Texto (*.txt);;Markdown (*.md)"
+            )
+
+            if not file_path:
+                return
+
+            lines = []
+            lines.append(f"# ANOTAÇÕES DE ESTUDO: {subj.name.upper()}\n")
+            lines.append("=" * 60 + "\n\n")
+
+            # Filtra tópicos: um específico ou todos da matéria
+            if selected_topic_id:
+                topics = db.query(Topic).filter(Topic.id == selected_topic_id).all()
+            else:
+                topics = (
+                    db.query(Topic)
+                    .join(PdfDocument)
+                    .filter(PdfDocument.subject_id == self.selected_subject_id)
+                    .all()
+                )
+
+            total_notes_count = 0
+
+            for topic in topics:
+                lines.append(f"📌 TÓPICO: {topic.title}\n")
+                lines.append("-" * 40 + "\n")
+
+                # Busca todos os blocos do tópico
+                blocks = db.query(StudyBlock).filter(StudyBlock.topic_id == topic.id).all()
+                
+                for block in blocks:
+                    # Verifica se o modelo do bloco possui campo/relacionamento de anotações
+                    # (Ajuste 'notes' ou 'annotation' conforme a coluna/relacionamento na sua Model StudyBlock)
+                    notes = getattr(block, 'notes', getattr(block, 'annotations', None))
+
+                    if notes:
+                        page_start = getattr(block, 'page_start', getattr(block, 'start_page', 1))
+                        page_end = getattr(block, 'page_end', getattr(block, 'end_page', 1))
+                        
+                        lines.append(f"  • Bloco (Págs {page_start} - {page_end}):\n")
+                        
+                        # Se as anotações forem uma lista de objetos ou uma string simples
+                        if isinstance(notes, list):
+                            for note in notes:
+                                note_text = getattr(note, 'content', str(note))
+                                lines.append(f"    - {note_text}\n")
+                                total_notes_count += 1
+                        else:
+                            lines.append(f"    {notes}\n")
+                            total_notes_count += 1
+                        
+                        lines.append("\n")
+
+                lines.append("\n")
+
+            if total_notes_count == 0:
+                QMessageBox.information(self, "Exportação", "Nenhuma anotação encontrada para o escopo selecionado.")
+                return
+
+            # Escreve o conteúdo no arquivo escolhido
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.writelines(lines)
+
+            QMessageBox.information(
+                self, 
+                "Sucesso", 
+                f"Anotações exportadas com sucesso!\n\nSalvo em: {file_path}"
+            )
+
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", f"Falha ao exportar anotações: {str(e)}")
+        finally:
+            db.close()
 
     def refresh(self):
         self.list_subjects.clear()

@@ -33,11 +33,9 @@ class PdfDocument(Base):
     
     subject = relationship("Subject", back_populates="pdfs")
     topics = relationship("Topic", back_populates="pdf", cascade="all, delete-orphan")
-    subject = relationship("Subject", back_populates="pdfs")
-    topics = relationship("Topic", back_populates="pdf", cascade="all, delete-orphan")
     
-    # NOVO RELACIONAMENTO:
     highlights = relationship("Highlight", back_populates="pdf", cascade="all, delete-orphan")
+    notes = relationship("Note", back_populates="pdf", cascade="all, delete-orphan")
 
 class Topic(Base):
     __tablename__ = "topics"
@@ -63,10 +61,30 @@ class StudyBlock(Base):
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
     time_spent_seconds = Column(Integer, default=0)
-    notes = Column(Text, nullable=True)
+    notes = relationship("Note", back_populates="block")
     
     topic = relationship("Topic", back_populates="blocks")
     sessions = relationship("StudySession", back_populates="block", cascade="all, delete-orphan")
+
+class Note(Base):
+    __tablename__ = "notes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    pdf_id = Column(Integer, ForeignKey("pdf_documents.id"), nullable=False)
+    page_number = Column(Integer, nullable=False)
+    
+    # Conteúdo da anotação
+    content = Column(Text, nullable=False)
+    
+    # Opcional: vincula ao bloco se a anotação foi feita dentro de uma sessão
+    block_id = Column(Integer, ForeignKey("study_blocks.id"), nullable=True)
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relacionamentos
+    pdf = relationship("PdfDocument", back_populates="notes")
+    block = relationship("StudyBlock", back_populates="notes")
 
 class StudySession(Base):
     __tablename__ = "study_sessions"

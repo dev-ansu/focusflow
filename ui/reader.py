@@ -2,13 +2,14 @@ from datetime import datetime
 import pymupdf as fitz
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-    QPushButton, QScrollArea, QMessageBox, QFrame, QCheckBox
+    QPushButton, QScrollArea, QMessageBox, QFrame, QCheckBox, QTextEdit
 )
-from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor
+from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QKeySequence, QShortcut
 from PySide6.QtCore import Qt, QTimer, QTime, Signal, QRect
 
 from database.connection import SessionLocal
-from models.models import StudyBlock, BlockStatus, Topic, PdfDocument, Subject, Highlight
+# Importando Note junto com os outros modelos
+from models.models import StudyBlock, BlockStatus, Topic, PdfDocument, Subject, Highlight, Note
 from services.study_manager import StudyManager
 
 
@@ -57,6 +58,7 @@ class PDFSelectableLabel(QLabel):
 
 class StudyReaderView(QWidget):
     back_requested = Signal()
+    toggle_left_sidebar_requested = Signal()
 
     def __init__(self, block_id=None):
         super().__init__()
@@ -65,6 +67,8 @@ class StudyReaderView(QWidget):
         self.current_pdf_id = None
         self.current_page = 0
         self.total_pages = 0
+        self.zoom_factor = 1.0       # 1.0 = 100%
+        self.auto_fit_width = True   # Controla se o fit automático está ativo
         
         # Flag para controlar se a mensagem de conclusão deve ser ocultada
         self.dont_show_completion_msg = False
@@ -78,12 +82,53 @@ class StudyReaderView(QWidget):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_timer)
         self.elapsed_seconds = 0
+
+        # 1. Botão para ocultar/exibir Menu Esquerdo (Main Window)
+        self.btn_toggle_left = QPushButton("📐 Menu Geral")
+        self.btn_toggle_left.setToolTip("Ocultar/Exibir Menu Principal")
+        self.btn_toggle_left.clicked.connect(lambda: self.toggle_left_sidebar_requested.emit())
+
+        # 2. Botão para ocultar/exibir Painel Direito de Anotações (QFrame de 280px)
+        self.btn_toggle_right = QPushButton("📝 Anotações")
+        self.btn_toggle_right.setToolTip("Ocultar/Exibir Painel de Anotações")
+        self.btn_toggle_right.clicked.connect(self.toggle_right_sidebar)
         
+        self.setup_shortcuts()
         self.init_ui()
+        
+    def setup_shortcuts(self):
+        # Avançar página (Seta Direita ou Page Down)
+        QShortcut(QKeySequence("Right"), self, self.next_page)
+        QShortcut(QKeySequence("PageDown"), self, self.next_page)
+
+        # Voltar página (Seta Esquerda ou Page Up)
+        QShortcut(QKeySequence("Left"), self, self.prev_page)
+        QShortcut(QKeySequence("PageUp"), self, self.prev_page)
+
+        # Atalhos de Zoom (Ctrl + / Ctrl -)
+        QShortcut(QKeySequence("Ctrl++"), self, self.zoom_in)
+        QShortcut(QKeySequence("Ctrl+-"), self, self.zoom_out)
 
     def init_ui(self):
-        main_layout = QHBoxLayout(self)
-        main_layout.setContentsMargins(10, 10, 10, 10)
+        # Layout raiz vertical
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(10, 10, 10, 10)
+        outer_layout.setSpacing(10)
+
+        # --------------------------------------------------------
+        # Toolbar Superior: Botões de Toggle
+        # --------------------------------------------------------
+        top_bar_layout = QHBoxLayout()
+        top_bar_layout.addWidget(self.btn_toggle_left)
+        top_bar_layout.addWidget(self.btn_toggle_right)
+        top_bar_layout.addStretch()
+        
+        outer_layout.addLayout(top_bar_layout)
+
+        # --------------------------------------------------------
+        # Área Principal (Visualizador PDF + Painel Anotações)
+        # --------------------------------------------------------
+        main_layout = QHBoxLayout()
         main_layout.setSpacing(15)
 
         # --- PAINEL ESQUERDO: Visualizador do PDF ---
@@ -101,7 +146,7 @@ class StudyReaderView(QWidget):
         
         pdf_container.addWidget(self.scroll_area)
 
-        # Barra de Navegação de Páginas
+        # Barra de Navegação e Zoom
         nav_layout = QHBoxLayout()
         self.btn_prev_page = QPushButton("⬅️ Anterior")
         self.btn_prev_page.clicked.connect(self.prev_page)
@@ -115,6 +160,22 @@ class StudyReaderView(QWidget):
         self.btn_next_page.clicked.connect(self.next_page)
         nav_layout.addWidget(self.btn_next_page)
 
+        # Botões de Zoom
+        self.btn_zoom_out = QPushButton("🔍-")
+        self.btn_zoom_out.setToolTip("Reduzir Zoom")
+        self.btn_zoom_out.clicked.connect(self.zoom_out)
+        nav_layout.addWidget(self.btn_zoom_out)
+
+        self.btn_zoom_fit = QPushButton("📐 Largura")
+        self.btn_zoom_fit.setToolTip("Ajustar à Largura")
+        self.btn_zoom_fit.clicked.connect(self.reset_zoom_to_fit)
+        nav_layout.addWidget(self.btn_zoom_fit)
+
+        self.btn_zoom_in = QPushButton("🔍+")
+        self.btn_zoom_in.setToolTip("Aumentar Zoom")
+        self.btn_zoom_in.clicked.connect(self.zoom_in)
+        nav_layout.addWidget(self.btn_zoom_in)
+
         # Botão de Desfazer Grifo
         self.btn_undo_highlight = QPushButton("↩️ Desfazer Grifo")
         self.btn_undo_highlight.clicked.connect(self.undo_last_highlight)
@@ -124,10 +185,10 @@ class StudyReaderView(QWidget):
         main_layout.addLayout(pdf_container, stretch=4)
 
         # --- PAINEL DIREITO: Acompanhamento e Ações ---
-        sidebar = QFrame()
-        sidebar.setFrameShape(QFrame.StyledPanel)
-        sidebar.setFixedWidth(280)
-        sidebar_layout = QVBoxLayout(sidebar)
+        self.sidebar = QFrame()
+        self.sidebar.setFrameShape(QFrame.StyledPanel)
+        self.sidebar.setFixedWidth(280)
+        sidebar_layout = QVBoxLayout(self.sidebar)
         
         self.lbl_info = QLabel("<h3>Nenhum bloco selecionado</h3>")
         self.lbl_info.setWordWrap(True)
@@ -178,6 +239,24 @@ class StudyReaderView(QWidget):
 
         sidebar_layout.addWidget(timer_frame)
 
+        # --- ÁREA DE ANOTAÇÕES DO BLOCO ---
+        lbl_notes_title = QLabel("<b>Anotações do Bloco:</b>")
+        sidebar_layout.addWidget(lbl_notes_title)
+
+        self.txt_notes = QTextEdit()
+        self.txt_notes.setPlaceholderText("Escreva aqui suas anotações para este bloco de estudos...")
+        self.txt_notes.setStyleSheet("""
+            QTextEdit {
+                background-color: #2c3e50;
+                color: #ecf0f1;
+                border: 1px solid #34495e;
+                border-radius: 6px;
+                padding: 6px;
+            }
+        """)
+        self.txt_notes.textChanged.connect(self.save_notes)
+        sidebar_layout.addWidget(self.txt_notes)
+
         # --- AÇÕES DO BLOCO ---
         self.btn_save_pause = QPushButton("💾 Pausar e Salvar")
         self.btn_save_pause.setStyleSheet("""
@@ -215,11 +294,145 @@ class StudyReaderView(QWidget):
         self.btn_complete_block.clicked.connect(self.complete_block)
         sidebar_layout.addWidget(self.btn_complete_block)
 
-        sidebar_layout.addStretch()
-        main_layout.addWidget(sidebar, stretch=0)
+        main_layout.addWidget(self.sidebar, stretch=0)
+        outer_layout.addLayout(main_layout)
+
+    def toggle_right_sidebar(self):
+        """Alterna a visibilidade da sidebar direita de anotações."""
+        if hasattr(self, 'sidebar'):
+            self.sidebar.setVisible(not self.sidebar.isVisible())
+
+    # --- MÉTODO PARA SALVAR NOTAS NO BANCO ---
+    def save_notes(self):
+        db = SessionLocal()
+        try:
+            # Descobre qual é o bloco da página em que o usuário está digitando
+            target_block_id = self.get_current_active_block_id(db)
+            if not target_block_id:
+                return
+
+            from sqlalchemy.orm import joinedload
+            block = db.query(StudyBlock).options(joinedload(StudyBlock.topic)).filter(StudyBlock.id == target_block_id).first()
+            if not block:
+                return
+
+            current_page_num = self.current_page + 1
+            novo_texto = self.txt_notes.toPlainText()
+
+            # Busca ou cria a anotação para o bloco e página corretos
+            note = db.query(Note).filter(
+                Note.block_id == target_block_id,
+                Note.page_number == current_page_num
+            ).first()
+
+            if note:
+                note.content = novo_texto
+            else:
+                if novo_texto.strip():
+                    nova_nota = Note(
+                        pdf_id=block.topic.pdf_id,
+                        page_number=current_page_num,
+                        content=novo_texto,
+                        block_id=block.id
+                    )
+                    db.add(nova_nota)
+
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            print(f"Erro ao salvar anotações do bloco: {e}")
+        finally:
+            db.close()
+
+    # --- NOVO MÉTODO PARA ANOTAÇÕES POR PÁGINA (OPCIONAL/HISTÓRICO) ---
+    def save_annotation_by_page(self, text_content):
+        """Salva uma nota vinculada à página atual do PDF."""
+        if not self.current_pdf_id:
+            return
+
+        db = SessionLocal()
+        try:
+            current_page_1based = self.current_page + 1
+            
+            # Encontra dinamicamente qual bloco de estudo engloba a página atual
+            block = (
+                db.query(StudyBlock)
+                .join(Topic, StudyBlock.topic_id == Topic.id)
+                .filter(
+                    Topic.pdf_id == self.current_pdf_id,
+                    StudyBlock.page_start <= current_page_1based,
+                    StudyBlock.page_end >= current_page_1based
+                )
+                .first()
+            )
+            
+            block_id = block.id if block else self.block_id
+
+            new_note = Note(
+                pdf_id=self.current_pdf_id,
+                page_number=current_page_1based,
+                content=text_content,
+                block_id=block_id
+            )
+            
+            db.add(new_note)
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            print(f"Erro ao salvar anotação por página: {e}")
+        finally:
+            db.close()
+
+    def get_notes_for_page(self, page_number):
+        if not self.current_pdf_id:
+            return []
+        
+        db = SessionLocal()
+        try:
+            notes = (
+                db.query(Note)
+                .filter(Note.pdf_id == self.current_pdf_id, Note.page_number == page_number)
+                .order_by(Note.created_at.asc())
+                .all()
+            )
+            return notes
+        finally:
+            db.close()
+
+    # --- CONTROLE DE ZOOM ---
+    def get_zoom_matrix(self, page):
+        """Calcula a matriz de zoom com base no modo atual."""
+        if self.auto_fit_width:
+            viewport_w = self.scroll_area.viewport().width()
+            page_width = page.rect.width
+            target_width = max(400, viewport_w - 30) if viewport_w > 30 else 400
+            scale = target_width / page_width if page_width > 0 else 1.0
+            self.zoom_factor = scale
+        else:
+            scale = self.zoom_factor
+
+        return fitz.Matrix(scale, scale)
+
+    def zoom_in(self):
+        self.auto_fit_width = False
+        self.zoom_factor *= 1.25
+        self.render_page()
+
+    def zoom_out(self):
+        self.auto_fit_width = False
+        self.zoom_factor /= 1.25
+        self.render_page()
+
+    def reset_zoom_to_fit(self):
+        self.auto_fit_width = True
+        self.render_page()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.doc and self.auto_fit_width:
+            self.render_page()
 
     def unload_pdf(self):
-        """Fecha o documento atual, limpa a tela e reseta o estado interno do leitor."""
         if self.doc:
             try:
                 self.doc.close()
@@ -234,16 +447,14 @@ class StudyReaderView(QWidget):
         self.lbl_pdf_page.setText("Nenhum PDF carregado.")
         self.lbl_page_info.setText("Página: 0 / 0")
         self.lbl_info.setText("<h3>Nenhum bloco selecionado</h3>")
+        
+        self.txt_notes.blockSignals(True)
+        self.txt_notes.clear()
+        self.txt_notes.blockSignals(False)
 
     def closeEvent(self, event):
-        """Garante a liberação de recursos ao fechar o widget."""
         self.unload_pdf()
         super().closeEvent(event)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if self.doc:
-            self.render_page()
 
     def load_block(self, block_id):
         self.unload_pdf()
@@ -255,6 +466,15 @@ class StudyReaderView(QWidget):
             block = db.query(StudyBlock).filter(StudyBlock.id == block_id).first()
             if not block:
                 return
+
+            # 1. Busca a anotação associada a este bloco no banco de dados
+            note = db.query(Note).filter(Note.block_id == block_id).first()
+            text_content = note.content if (note and note.content) else ""
+
+            # 2. Bloqueia sinais temporariamente ao carregar o texto para não disparar eventos (ex: save_notes)
+            self.txt_notes.blockSignals(True)
+            self.txt_notes.setPlainText(text_content)
+            self.txt_notes.blockSignals(False)
 
             topic = db.query(Topic).filter(Topic.id == block.topic_id).first()
             pdf_doc = db.query(PdfDocument).filter(PdfDocument.id == topic.pdf_id).first() if topic else None
@@ -280,11 +500,67 @@ class StudyReaderView(QWidget):
                 
                 saved_page = block.current_page if (block.current_page and block.current_page > 0) else self.page_start
                 self.current_page = max(0, saved_page - 1)
-                self.render_page()
+                self.render_page()             # Renderiza o PDF
+                self.load_current_page_notes() # Carrega a nota da página atual
         except Exception as e:
             QMessageBox.critical(self, "Erro", f"Não foi possível abrir o PDF: {str(e)}")
         finally:
             db.close()
+    
+    def load_current_page_notes(self):
+        """Carrega as anotações específicas do bloco e da página visível no momento."""
+        db = SessionLocal()
+        try:
+            target_block_id = self.get_current_active_block_id(db)
+            if not target_block_id:
+                self.txt_notes.blockSignals(True)
+                self.txt_notes.setPlainText("")
+                self.txt_notes.blockSignals(False)
+                return
+
+            current_page_num = self.current_page + 1
+
+            # Busca a nota vinculada ao bloco correspondente à página atual
+            note = db.query(Note).filter(
+                Note.block_id == target_block_id,
+                Note.page_number == current_page_num
+            ).first()
+
+            text_content = note.content if (note and note.content) else ""
+
+            self.txt_notes.blockSignals(True)
+            self.txt_notes.setPlainText(text_content)
+            self.txt_notes.blockSignals(False)
+        except Exception as e:
+            print(f"Erro ao carregar anotações da página: {e}")
+        finally:
+            db.close()
+
+    def get_current_active_block_id(self, db):
+        """
+        Retorna o ID do bloco correspondente à página atual.
+        Se a página estiver dentro do intervalo de outro bloco, usa esse bloco.
+        """
+        current_page_num = self.current_page + 1
+
+        # Se tivermos um pdf_id, procuramos se essa página pertence a algum bloco específico
+        if hasattr(self, 'current_pdf_id') and self.current_pdf_id:
+            # Busca o bloco do PDF cuja faixa de páginas (page_start até page_end) inclui a página atual
+            block = (
+                db.query(StudyBlock)
+                .join(Topic)
+                .filter(
+                    Topic.pdf_id == self.current_pdf_id,
+                    StudyBlock.page_start <= current_page_num,
+                    StudyBlock.page_end >= current_page_num
+                )
+                .first()
+            )
+            if block:
+                return block.id
+
+        # Fallback para o block_id carregado na sessão
+        return self.block_id
 
     def render_page(self, page_num: int = None):
         if page_num is not None:
@@ -293,17 +569,15 @@ class StudyReaderView(QWidget):
         if not self.doc or self.current_page < 0 or self.current_page >= self.total_pages:
             return
 
-        page = self.doc[self.current_page]
-
-        # Remove anotações temporárias do PDF para redesenhar atualizadas do BD
+        page = self.doc.load_page(self.current_page)
+        
         annot = page.first_annot
         while annot:
             next_annot = annot.next
-            if annot.type[0] == 8:  # Type 8 = Highlight Annotation
+            if annot.type[0] == 8:
                 page.delete_annot(annot)
             annot = next_annot
 
-        # Desenha os grifos persistidos no banco de dados
         if self.current_pdf_id:
             db = SessionLocal()
             try:
@@ -313,30 +587,31 @@ class StudyReaderView(QWidget):
                     page_number=self.current_page + 1
                 )
                 for hl in highlights:
-                    if hl.selected_text:
+                    if all(getattr(hl, attr, None) is not None for attr in ['x', 'y', 'width', 'height']):
+                        rect = fitz.Rect(hl.x, hl.y, hl.x + hl.width, hl.y + hl.height)
+                        annot = page.add_highlight_annot(rect)
+                        annot.set_colors(stroke=(1, 1, 0))
+                        annot.update()
+                    elif hl.selected_text:
                         matches = page.search_for(hl.selected_text)
                         for rect in matches:
                             annot = page.add_highlight_annot(rect)
-                            annot.set_colors(stroke=(1, 1, 0))  # Cor Amarela
+                            annot.set_colors(stroke=(1, 1, 0))
                             annot.update()
             except Exception as e:
                 print(f"Erro ao carregar grifos: {e}")
             finally:
                 db.close()
 
-        viewport_w = self.scroll_area.viewport().width()
-        target_width = max(400, viewport_w - 30) if viewport_w > 30 else 400
-        zoom = target_width / page.rect.width
-        matrix = fitz.Matrix(zoom, zoom)
-
+        matrix = self.get_zoom_matrix(page)
         pix = page.get_pixmap(matrix=matrix)
         
-        # Faz uma cópia explícita da imagem para evitar vazamento/crash de ponteiro C/Python
         qimg = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format_RGB888).copy()
         pixmap = QPixmap.fromImage(qimg)
 
         self.lbl_pdf_page.setPixmap(pixmap)
         self.lbl_page_info.setText(f"Página: {self.current_page + 1} / {self.total_pages}")
+        self.load_current_page_notes()
 
     def undo_last_highlight(self):
         if not self.current_pdf_id:
@@ -363,9 +638,7 @@ class StudyReaderView(QWidget):
             return
 
         page = self.doc[self.current_page]
-        viewport_w = self.scroll_area.viewport().width()
-        target_width = max(400, viewport_w - 30) if viewport_w > 30 else 400
-        zoom = target_width / page.rect.width
+        zoom = self.zoom_factor if self.zoom_factor > 0 else 1.0
 
         pdf_rect = fitz.Rect(
             rect.x() / zoom,
@@ -388,12 +661,21 @@ class StudyReaderView(QWidget):
 
         db = SessionLocal()
         try:
+            x = pdf_rect.x0 if pdf_rect else None
+            y = pdf_rect.y0 if pdf_rect else None
+            width = pdf_rect.width if pdf_rect else None
+            height = pdf_rect.height if pdf_rect else None
+
             StudyManager.add_highlight(
                 db=db,
                 pdf_id=self.current_pdf_id,
                 page_number=self.current_page + 1,
                 selected_text=selected_text.strip(),
-                color="#FFFF00"
+                color="#FFFF00",
+                x=x,
+                y=y,
+                width=width,
+                height=height
             )
             self.render_page()
         except Exception as e:
@@ -418,12 +700,14 @@ class StudyReaderView(QWidget):
 
     def prev_page(self):
         if self.current_page > 0:
+            self.save_notes()
             self.current_page -= 1
             self.render_page()
             self.save_current_page()
 
     def next_page(self):
         if self.current_page < self.total_pages - 1:
+            self.save_notes()
             self.current_page += 1
             self.render_page()
             self.save_current_page()
@@ -433,6 +717,7 @@ class StudyReaderView(QWidget):
         current_page_1based = self.current_page + 1
         
         if current_page_1based > self.page_end and self.block_status != BlockStatus.CONCLUIDO:
+            self.save_notes()
             db = SessionLocal()
             try:
                 block = db.query(StudyBlock).filter(StudyBlock.id == self.block_id).first()
@@ -559,6 +844,7 @@ class StudyReaderView(QWidget):
     def save_and_pause(self):
         self.pause_timer()
         self.save_current_page()
+        self.save_notes()
 
         if self.block_id and self.elapsed_seconds > 0:
             db = SessionLocal()
@@ -579,6 +865,7 @@ class StudyReaderView(QWidget):
     def complete_block(self):
         self.pause_timer()
         self.save_current_page()
+        self.save_notes()
 
         db = SessionLocal()
         try:

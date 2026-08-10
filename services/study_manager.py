@@ -147,16 +147,33 @@ class StudyManager:
         db.commit()
 
     @staticmethod
-    def add_highlight(db, pdf_id: int, page_number: int, selected_text: str, color: str = "#FFFF00", rect: tuple = None):
+    @staticmethod
+    def add_highlight(
+        db, 
+        pdf_id: int, 
+        page_number: int, 
+        selected_text: str, 
+        color: str = "#FFFF00", 
+        rect: tuple = None,
+        x: float = None,
+        y: float = None,
+        width: float = None,
+        height: float = None
+    ):
         """Salva um novo grifo associado ao PDF e à página."""
-        x, y, w, h = rect if rect else (None, None, None, None)
-        
+        # Se rect foi passado como tupla (x, y, w, h), desempacota
+        if rect and isinstance(rect, (tuple, list)) and len(rect) == 4:
+            x, y, width, height = rect
+
         hl = Highlight(
             pdf_id=pdf_id,
             page_number=page_number,
             selected_text=selected_text,
             color=color,
-            x=x, y=y, width=w, height=h
+            x=x, 
+            y=y, 
+            width=width, 
+            height=height
         )
         db.add(hl)
         db.commit()
