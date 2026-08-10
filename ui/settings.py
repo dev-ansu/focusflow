@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QPushButton, QFileDialog,
 from PySide6.QtCore import Qt, Signal
 from services.backup_manager import BackupManager
 from database.connection import SessionLocal
-from models.models import Subject, PdfDocument, Topic, StudyBlock, StudySession, StudyCycle, Highlight
+from models.models import Subject, PdfDocument, Topic, StudyBlock, StudySession, StudyCycle, Highlight, Note
 
 
 class SettingsView(QWidget):
@@ -176,6 +176,7 @@ class SettingsView(QWidget):
                 db.query(PdfDocument).delete()
                 db.query(StudyCycle).delete()
                 db.query(Subject).delete()
+                db.query(Note).delete()
                 db.commit()
                 db.close()
 
