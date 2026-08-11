@@ -1,5 +1,9 @@
-from PySide6.QtWidgets import QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QPushButton, QStackedWidget, QMessageBox
+from PySide6.QtWidgets import (
+    QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, 
+    QPushButton, QStackedWidget, QMessageBox, QDialog
+)
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QShortcut, QKeySequence
 
 from ui.dashboard import DashboardView
 from ui.subjects import SubjectView
@@ -8,10 +12,12 @@ from ui.toc_review import TOCReviewView
 from ui.study_session import StudySessionView
 from ui.settings import SettingsView
 from ui.reader import StudyReaderView
+from ui.global_search_dialog import GlobalSearchDialog
 
 from services.toc_detector import TOCDetector
 from services.topic_parser import TopicParser
 from services.pdf_parser import PDFParser
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -31,7 +37,7 @@ class MainWindow(QMainWindow):
         # -------------------------------------------------------------
         # 1. Menu Lateral Esquerdo (Sidebar Esquerda)
         # -------------------------------------------------------------
-        self.sidebar_widget = QWidget()  # Envelopado em um QWidget para permitir .setVisible()
+        self.sidebar_widget = QWidget()
         sidebar_layout = QVBoxLayout(self.sidebar_widget)
         sidebar_layout.setAlignment(Qt.AlignTop)
 
@@ -50,13 +56,32 @@ class MainWindow(QMainWindow):
         btn_settings = QPushButton("⚙️ Configurações")
         btn_settings.clicked.connect(lambda: self.switch_view(4))
 
+        # 🔍 Botão de Busca Global na Sidebar
+        btn_global_search = QPushButton("🔍 Busca Global (Ctrl+F)")
+        btn_global_search.setStyleSheet("""
+            QPushButton { 
+                background-color: #2980B9; 
+                color: white; 
+                font-weight: bold; 
+                padding: 8px 12px; 
+                border-radius: 5px; 
+            } 
+            QPushButton:hover { background-color: #3498DB; }
+        """)
+        btn_global_search.clicked.connect(self.open_global_search)
+
         sidebar_layout.addWidget(btn_dash)
         sidebar_layout.addWidget(btn_subj)
         sidebar_layout.addWidget(btn_reader)
         sidebar_layout.addWidget(btn_import)
         sidebar_layout.addWidget(btn_settings)
+        sidebar_layout.addWidget(btn_global_search)
 
         layout.addWidget(self.sidebar_widget, stretch=0)
+
+        # ⌨️ Atalho de Teclado Global (Ctrl+F)
+        self.shortcut_search = QShortcut(QKeySequence("Ctrl+F"), self)
+        self.shortcut_search.activated.connect(self.open_global_search)
 
         # -------------------------------------------------------------
         # 2. Central Stacked Views (Pilha de Telas)
@@ -67,6 +92,7 @@ class MainWindow(QMainWindow):
         self.dash_view.start_study_signal.connect(self.open_study_session)
 
         self.subj_view = SubjectView()
+        self.subj_view.start_study_signal.connect(self.open_study_session)
         self.reader_view = StudyReaderView()
 
         # Conecta o sinal do leitor para alternar/esconder a sidebar esquerda
@@ -84,10 +110,51 @@ class MainWindow(QMainWindow):
         self.stack.addWidget(self.reader_view)    # Index 2
         self.stack.addWidget(self.import_view)    # Index 3
         self.stack.addWidget(self.settings_view)  # Index 4
-        
+
         layout.addWidget(self.stack, stretch=1)
         
         self.settings_view.app_reset.connect(self.handle_app_reset)
+    
+    def open_global_search(self):
+        dialog = GlobalSearchDialog(self)
+        if dialog.exec() == QDialog.Accepted and dialog.selected_result:
+            res = dialog.selected_result
+            subject_id = res.get("subject_id")
+            
+            if subject_id:
+                # 1. Muda para a aba de Matérias (Index 1)
+                self.switch_view(1)
+                
+                # 2. Seleciona a matéria na lista dentro da subj_view
+                for i in range(self.subj_view.list_subjects.count()):
+                    item = self.subj_view.list_subjects.item(i)
+                    if item.data(Qt.UserRole) == subject_id:
+                        self.subj_view.list_subjects.setCurrentItem(item)
+                        self.subj_view.on_subject_selected(item)
+                        break
+                
+                # 3. Se for um tópico, seleciona e foca na árvore da subj_view
+                topic_id = res.get("topic_id")
+                if topic_id:
+                    self._select_topic_in_tree(topic_id)
+
+    def _select_topic_in_tree(self, topic_id):
+        """Percorre a árvore de tópicos dentro da subj_view e foca no item buscado."""
+        tree = self.subj_view.tree_topics
+        
+        def search_node(parent_item=None):
+            count = parent_item.childCount() if parent_item else tree.topLevelItemCount()
+            for i in range(count):
+                item = parent_item.child(i) if parent_item else tree.topLevelItem(i)
+                if item.data(Qt.UserRole) == topic_id and item.data(Qt.UserRole + 1) == "TOPIC":
+                    tree.setCurrentItem(item)
+                    tree.scrollToItem(item)
+                    return True
+                if search_node(item):
+                    return True
+            return False
+
+        search_node(None)
 
     def toggle_left_sidebar(self):
         """Alterna a visibilidade do menu principal esquerdo."""

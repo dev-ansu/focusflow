@@ -192,6 +192,11 @@ class TOCReviewView(QWidget):
                 color: #ECF0F1;
                 selection-background-color: #34495E;
             }
+            QSpinBox:disabled {
+                background-color: #1A1D24;
+                color: #555555;
+                border: 1px solid #2A2D34;
+            }
         """)
         config_layout = QHBoxLayout(config_card)
         config_layout.setSpacing(15)
@@ -202,20 +207,25 @@ class TOCReviewView(QWidget):
         self.cmb_mode.addItems(["Por Tópico (1 Tópico = 1 Bloco)", "Por Limite de Páginas"])
         config_layout.addWidget(self.cmb_mode)
 
-        config_layout.addWidget(QLabel("Págs. por Bloco:"))
+        self.lbl_pages_per_block = QLabel("Págs. por Bloco:")
+        config_layout.addWidget(self.lbl_pages_per_block)
+        
         self.spn_pages = QSpinBox()
-        # Limita o número de páginas por bloco ao máximo existente no PDF
         self.spn_pages.setRange(1, self.total_pages)
         self.spn_pages.setValue(min(15, self.total_pages))
         config_layout.addWidget(self.spn_pages)
+
+        # Conecta a alteração do modo para habilitar/desabilitar o SpinBox
+        self.cmb_mode.currentIndexChanged.connect(self._on_mode_changed)
+        self._on_mode_changed(self.cmb_mode.currentIndex())  # Aplica o estado inicial
 
         config_layout.addStretch()
         main_layout.addWidget(config_card)
 
         # --- BOTÃO PRINCIPAL DE SALVAR ---
-        btn_confirm = QPushButton("🚀 Confirmar e Gerar Blocos")
-        btn_confirm.setCursor(Qt.PointingHandCursor)
-        btn_confirm.setStyleSheet("""
+        self.btn_confirm = QPushButton("🚀 Confirmar e Gerar Blocos")
+        self.btn_confirm.setCursor(Qt.PointingHandCursor)
+        self.btn_confirm.setStyleSheet("""
             QPushButton {
                 background-color: #27AE60;
                 color: white;
@@ -228,9 +238,15 @@ class TOCReviewView(QWidget):
                 background-color: #2ECC71;
             }
         """)
-        btn_confirm.clicked.connect(self.save)
+        self.btn_confirm.clicked.connect(self.save)
         
-        main_layout.addWidget(btn_confirm)
+        main_layout.addWidget(self.btn_confirm)
+
+    def _on_mode_changed(self, index: int):
+        """Habilita ou desabilita o SpinBox de páginas conforme o modo de divisão selecionado."""
+        is_page_limit_mode = (index == 1)
+        self.spn_pages.setEnabled(is_page_limit_mode)
+        self.lbl_pages_per_block.setEnabled(is_page_limit_mode)
 
     def set_progress_info(self, current: int, total: int):
         """Atualiza a legenda do cabeçalho indicando o progresso do lote."""
@@ -239,11 +255,15 @@ class TOCReviewView(QWidget):
                 f"<span style='color: #3498DB; font-weight: bold;'>[PDF {current} de {total}]</span> "
                 f"Ajuste os tópicos (PDF com {self.total_pages} pág(s)). Nenhuma página pode exceder esse limite."
             )
+            # Atualiza o texto do botão no caso de lote para indicar que haverá próximo
+            if current < total:
+                self.btn_confirm.setText(f"🚀 Confirmar e Ir para o Próximo PDF ({current}/{total}) ➔")
+            else:
+                self.btn_confirm.setText("🚀 Concluir Importação em Lote")
 
     def populate_tree(self):
         self.tree.clear()
         for t in self.detected_topics:
-            # Clampa os limites detectados ao máximo real do PDF caso a detecção automática falhe
             p_start = min(max(1, t["page_start"]), self.total_pages)
             p_end = min(max(p_start, t["page_end"]), self.total_pages)
 
@@ -252,7 +272,7 @@ class TOCReviewView(QWidget):
             self.tree.addTopLevelItem(item)
 
     def add_topic(self):
-        """Adiciona um novo tópico garantindo que não ultrapasse o total de páginas do PDF."""
+        """Adiciona um novo tópico e entra em modo de edição diretamente no título."""
         p_start = str(min(1, self.total_pages))
         p_end = str(min(10, self.total_pages))
         
@@ -260,6 +280,9 @@ class TOCReviewView(QWidget):
         item.setFlags(item.flags() | Qt.ItemIsEditable)
         self.tree.addTopLevelItem(item)
         self.tree.setCurrentItem(item)
+        
+        # Abre o editor de texto direto na coluna do título do novo item
+        self.tree.editItem(item, 0)
 
     def remove_topic(self):
         root = self.tree.invisibleRootItem()
@@ -273,10 +296,10 @@ class TOCReviewView(QWidget):
 
             pdf_doc = PdfDocument(
                 subject_id=self.subject_id,
-                title=info["title"],
+                title=info.get("title", "Documento Sem Título"),
                 file_path=self.file_path,
-                file_size_bytes=info["size_bytes"],
-                total_pages=info["pages"]
+                file_size_bytes=info.get("size_bytes", 0),
+                total_pages=info.get("pages", self.total_pages)
             )
             db.add(pdf_doc)
             db.flush()
@@ -352,10 +375,9 @@ class TOCReviewView(QWidget):
                 )
 
             db.commit()
-            QMessageBox.information(self, "Sucesso", "PDF e tópicos importados com sucesso!")
             self.completed.emit()
         except Exception as e:
             db.rollback()
-            QMessageBox.critical(self, "Erro", f"Erro ao salvar: {str(e)}")
+            QMessageBox.critical(self, "Erro ao Salvar", f"Não foi possível salvar a estrutura do PDF:\n{str(e)}")
         finally:
             db.close()

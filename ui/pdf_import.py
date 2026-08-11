@@ -1,3 +1,4 @@
+import os
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
                              QLabel, QFileDialog, QComboBox, QMessageBox, QTableWidget, 
                              QTableWidgetItem, QInputDialog, QHeaderView)
@@ -218,28 +219,58 @@ class PDFImportView(QWidget):
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
-            event.acceptProposedAction()
+            # Aceita apenas se houver pelo menos um .pdf arrastado
+            urls = event.mimeData().urls()
+            if any(u.toLocalFile().lower().endswith('.pdf') for u in urls):
+                event.acceptProposedAction()
 
     def dropEvent(self, event):
         files = [u.toLocalFile() for u in event.mimeData().urls() if u.toLocalFile().lower().endswith('.pdf')]
-        self.add_files(files)
+        
+        # Se tentou soltar arquivos que não são PDF
+        total_dropped = len(event.mimeData().urls())
+        if len(files) < total_dropped:
+            QMessageBox.information(
+                self, "Filtro de Arquivos", 
+                "Alguns arquivos foram ignorados por não estarem no formato PDF."
+            )
+            
+        if files:
+            self.add_files(files)
 
     def browse_files(self):
-        files, _ = QFileDialog.getOpenFileNames(self, "Selecionar PDFs", "", "Arquivos PDF (*.pdf)")
+        # Filtro 'Arquivos PDF (*.pdf)' garante a restrição na janela do SO
+        files, _ = QFileDialog.getOpenFileNames(
+            self, "Selecionar PDFs", "", "Arquivos PDF (*.pdf)"
+        )
         if files:
             self.add_files(files)
 
     def add_files(self, files):
         for f in files:
+            # 1. Validação de extensão dupla
+            if not f.lower().endswith('.pdf'):
+                continue
+
             if f not in self.selected_files:
-                self.selected_files.append(f)
-                info = PDFParser.get_info(f)
-                row = self.table.rowCount()
-                self.table.insertRow(row)
-                self.table.setItem(row, 0, QTableWidgetItem(info['title']))
-                self.table.setItem(row, 1, QTableWidgetItem(str(info['pages'])))
-                size_mb = f"{info['size_bytes'] / (1024*1024):.2f} MB"
-                self.table.setItem(row, 2, QTableWidgetItem(size_mb))
+                try:
+                    # 2. Tenta extrair info do PDF (se der erro, o PDF pode estar corrompido)
+                    info = PDFParser.get_info(f)
+                    
+                    self.selected_files.append(f)
+                    row = self.table.rowCount()
+                    self.table.insertRow(row)
+                    self.table.setItem(row, 0, QTableWidgetItem(info['title']))
+                    self.table.setItem(row, 1, QTableWidgetItem(str(info['pages'])))
+                    size_mb = f"{info['size_bytes'] / (1024*1024):.2f} MB"
+                    self.table.setItem(row, 2, QTableWidgetItem(size_mb))
+                
+                except Exception as e:
+                    file_name = os.path.basename(f)
+                    QMessageBox.warning(
+                        self, "Erro ao carregar PDF", 
+                        f"Não foi possível ler o arquivo '{file_name}'. Ele pode estar protegido ou corrompido.\n\nDetalhes: {str(e)}"
+                    )
 
     def remove_selected_file(self):
         current_row = self.table.currentRow()
@@ -263,10 +294,7 @@ class PDFImportView(QWidget):
             return
 
         subject_id = self.cmb_subject.currentData()
-        # Envia a LISTA completa de arquivos selecionados
         self.import_requested.emit(self.selected_files.copy(), subject_id)
-        
-        # Limpa a fila após emitir
         self.clear_all_files()
 
     def showEvent(self, event):

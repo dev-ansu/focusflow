@@ -1,11 +1,101 @@
 import os
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
-                               QPushButton, QLabel, QInputDialog, QMessageBox, QTreeWidget, 
-                               QTreeWidgetItem, QFileDialog, QHeaderView, QAbstractItemView)
-from PySide6.QtCore import Qt
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
+    QPushButton, QLabel, QInputDialog, QMessageBox, QTreeWidget, 
+    QTreeWidgetItem, QFileDialog, QHeaderView, QAbstractItemView,
+    QDialog, QTextEdit, QComboBox
+)
+from PySide6.QtCore import Qt, Signal
 import pymupdf as fitz
+from sqlalchemy.orm import joinedload, subqueryload
+
 from database.connection import SessionLocal
 from models.models import Subject, Topic, StudyBlock, BlockStatus, PdfDocument
+from services.pdf_parser import PDFParser
+
+
+class NotesPreviewDialog(QDialog):
+    """Janela Modal para preview e exportação das anotações em Markdown ou TXT."""
+    def __init__(self, subject_name, content_md, content_txt, parent=None):
+        super().__init__(parent)
+        self.subject_name = subject_name
+        self.content_md = content_md
+        self.content_txt = content_txt
+
+        self.setWindowTitle(f"Preview das Anotações - {subject_name}")
+        self.resize(750, 550)
+        self.setStyleSheet("""
+            QDialog { background-color: #1E222A; color: #ECF0F1; }
+            QLabel { color: #ECF0F1; }
+            QComboBox { background-color: #2C3E50; color: white; border: 1px solid #34495E; border-radius: 5px; padding: 5px; }
+            QTextEdit { background-color: #282C34; color: #ABB2BF; border: 1px solid #34495E; border-radius: 8px; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; }
+        """)
+
+        layout = QVBoxLayout(self)
+
+        top_layout = QHBoxLayout()
+        lbl_info = QLabel("<b>Visualização Prévia das Anotações:</b>")
+        lbl_info.setStyleSheet("font-size: 15px;")
+        top_layout.addWidget(lbl_info)
+        top_layout.addStretch()
+
+        lbl_format = QLabel("Formato:")
+        top_layout.addWidget(lbl_format)
+
+        self.combo_format = QComboBox()
+        self.combo_format.addItems(["Markdown (.md)", "Texto Puro (.txt)"])
+        self.combo_format.currentIndexChanged.connect(self.update_preview_content)
+        top_layout.addWidget(self.combo_format)
+
+        layout.addLayout(top_layout)
+
+        self.txt_preview = QTextEdit()
+        layout.addWidget(self.txt_preview)
+
+        bottom_layout = QHBoxLayout()
+        btn_cancel = QPushButton("Cancelar")
+        btn_cancel.setStyleSheet("QPushButton { background-color: #7F8C8D; color: white; padding: 8px 15px; border-radius: 5px; font-weight: bold; } QPushButton:hover { background-color: #95A5A6; }")
+        btn_cancel.clicked.connect(self.reject)
+        bottom_layout.addWidget(btn_cancel)
+
+        bottom_layout.addStretch()
+
+        btn_save = QPushButton("💾 Salvar em Disco")
+        btn_save.setStyleSheet("QPushButton { background-color: #2ECC71; color: white; padding: 8px 15px; border-radius: 5px; font-weight: bold; } QPushButton:hover { background-color: #27AE60; }")
+        btn_save.clicked.connect(self.save_file)
+        bottom_layout.addWidget(btn_save)
+
+        layout.addLayout(bottom_layout)
+        self.update_preview_content()
+
+    def update_preview_content(self):
+        if self.combo_format.currentIndex() == 0:
+            self.txt_preview.setPlainText(self.content_md)
+        else:
+            self.txt_preview.setPlainText(self.content_txt)
+
+    def save_file(self):
+        is_md = self.combo_format.currentIndex() == 0
+        ext_filter = "Markdown (*.md)" if is_md else "Arquivo de Texto (*.txt)"
+        default_ext = ".md" if is_md else ".txt"
+        default_name = f"Anotacoes_{self.subject_name.replace(' ', '_')}{default_ext}"
+
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Salvar Anotações", default_name, f"{ext_filter};;Todos os Arquivos (*.*)"
+        )
+
+        if not file_path:
+            return
+
+        content_to_save = self.content_md if is_md else self.content_txt
+
+        try:
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(content_to_save)
+            QMessageBox.information(self, "Sucesso", f"Anotações salvas em:\n{file_path}")
+            self.accept()
+        except Exception as e:
+            QMessageBox.critical(self, "Erro ao Salvar", f"Não foi possível salvar o arquivo:\n{str(e)}")
 
 
 class OrderableTreeWidget(QTreeWidget):
@@ -20,6 +110,9 @@ class OrderableTreeWidget(QTreeWidget):
 
 
 class SubjectView(QWidget):
+    # 📡 Sinal enviado para abrir a sessão de estudo no leitor
+    start_study_signal = Signal(int)
+
     def __init__(self):
         super().__init__()
         self.selected_subject_id = None
@@ -39,56 +132,22 @@ class SubjectView(QWidget):
         
         self.list_subjects = QListWidget()
         self.list_subjects.setStyleSheet("""
-            QListWidget {
-                background-color: #1E222A;
-                color: #ECF0F1;
-                border: 1px solid #34495E;
-                border-radius: 8px;
-                font-size: 14px;
-            }
-            QListWidget::item {
-                padding: 10px;
-                border-bottom: 1px solid #2C3E50;
-            }
-            QListWidget::item:hover {
-                background-color: #2C3E50;
-            }
-            QListWidget::item:selected {
-                background-color: #34495E;
-                color: #3498DB;
-                font-weight: bold;
-            }
+            QListWidget { background-color: #1E222A; color: #ECF0F1; border: 1px solid #34495E; border-radius: 8px; font-size: 14px; }
+            QListWidget::item { padding: 10px; border-bottom: 1px solid #2C3E50; }
+            QListWidget::item:hover { background-color: #2C3E50; }
+            QListWidget::item:selected { background-color: #34495E; color: #3498DB; font-weight: bold; }
         """)
         self.list_subjects.itemClicked.connect(self.on_subject_selected)
         left_layout.addWidget(self.list_subjects)
 
-        # Botões de Ação para Matérias
         btn_add_subject = QPushButton("➕ Nova Matéria")
-        btn_add_subject.setStyleSheet("""
-            QPushButton {
-                background-color: #3498DB;
-                color: white;
-                font-weight: bold;
-                padding: 8px;
-                border-radius: 5px;
-            }
-            QPushButton:hover { background-color: #2980B9; }
-        """)
+        btn_add_subject.setStyleSheet("QPushButton { background-color: #3498DB; color: white; font-weight: bold; padding: 8px; border-radius: 5px; } QPushButton:hover { background-color: #2980B9; }")
         btn_add_subject.setCursor(Qt.PointingHandCursor)
         btn_add_subject.clicked.connect(self.add_subject)
         left_layout.addWidget(btn_add_subject)
 
         btn_delete_subject = QPushButton("❌ Apagar Matéria")
-        btn_delete_subject.setStyleSheet("""
-            QPushButton {
-                background-color: #8E44AD;
-                color: white;
-                font-weight: bold;
-                padding: 8px;
-                border-radius: 5px;
-            }
-            QPushButton:hover { background-color: #732D91; }
-        """)
+        btn_delete_subject.setStyleSheet("QPushButton { background-color: #8E44AD; color: white; font-weight: bold; padding: 8px; border-radius: 5px; } QPushButton:hover { background-color: #732D91; }")
         btn_delete_subject.setCursor(Qt.PointingHandCursor)
         btn_delete_subject.clicked.connect(self.delete_selected_subject)
         left_layout.addWidget(btn_delete_subject)
@@ -102,62 +161,39 @@ class SubjectView(QWidget):
         self.lbl_title.setStyleSheet("color: #FFFFFF; font-size: 18px;")
         right_layout.addWidget(self.lbl_title)
 
-        # Árvore de Tópicos com Suporte a Drag and Drop
         self.tree_topics = OrderableTreeWidget(self)
         self.tree_topics.setHeaderLabels(["Tópico / Bloco", "Status / Páginas"])
         self.tree_topics.header().setSectionResizeMode(0, QHeaderView.Stretch)
         self.tree_topics.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         
-        # Configuração do Drag and Drop
         self.tree_topics.setDragEnabled(True)
         self.tree_topics.setAcceptDrops(True)
         self.tree_topics.setDropIndicatorShown(True)
         self.tree_topics.setDragDropMode(QAbstractItemView.InternalMove)
 
+        # 🖱️ Permite duplo clique no item para iniciar o estudo imediatamente
+        self.tree_topics.itemDoubleClicked.connect(self.on_item_double_clicked)
+
         self.tree_topics.setStyleSheet("""
-            QTreeWidget {
-                background-color: #1E222A;
-                color: #ECF0F1;
-                border: 1px solid #34495E;
-                border-radius: 8px;
-                font-size: 13px;
-            }
-            QTreeWidget::item {
-                padding: 6px;
-            }
-            QTreeWidget::item:hover {
-                background-color: #2C3E50;
-            }
-            QTreeWidget::item:selected {
-                background-color: #34495E;
-                color: #FFFFFF;
-            }
-            QHeaderView::section {
-                background-color: #2C3E50;
-                color: #BDC3C7;
-                font-weight: bold;
-                padding: 6px;
-                border: none;
-            }
+            QTreeWidget { background-color: #1E222A; color: #ECF0F1; border: 1px solid #34495E; border-radius: 8px; font-size: 13px; }
+            QTreeWidget::item { padding: 6px; }
+            QTreeWidget::item:hover { background-color: #2C3E50; }
+            QTreeWidget::item:selected { background-color: #34495E; color: #FFFFFF; }
+            QHeaderView::section { background-color: #2C3E50; color: #BDC3C7; font-weight: bold; padding: 6px; border: none; }
         """)
         right_layout.addWidget(self.tree_topics)
 
-        # --- BARRA DE AÇÕES DA MATÉRIA / TÓPICOS ---
         action_layout = QHBoxLayout()
 
-        btn_export_notes = QPushButton("📝 Exportar Anotações")
-        btn_export_notes.setStyleSheet("""
-            QPushButton { 
-                background-color: #9B59B6; 
-                color: white; 
-                font-weight: bold; 
-                padding: 8px 12px; 
-                border-radius: 5px; 
-            } 
-            QPushButton:hover { 
-                background-color: #8E44AD; 
-            }
-        """)
+        # ▶️ Botão Estudar Bloco
+        btn_start_study = QPushButton("▶️ Estudar Bloco")
+        btn_start_study.setStyleSheet("QPushButton { background-color: #27AE60; color: white; font-weight: bold; padding: 8px 12px; border-radius: 5px; } QPushButton:hover { background-color: #219653; }")
+        btn_start_study.setCursor(Qt.PointingHandCursor)
+        btn_start_study.clicked.connect(self.start_study_selected)
+        action_layout.addWidget(btn_start_study)
+
+        btn_export_notes = QPushButton("📝 Ver / Exportar Anotações")
+        btn_export_notes.setStyleSheet("QPushButton { background-color: #9B59B6; color: white; font-weight: bold; padding: 8px 12px; border-radius: 5px; } QPushButton:hover { background-color: #8E44AD; }")
         btn_export_notes.setCursor(Qt.PointingHandCursor)
         btn_export_notes.clicked.connect(self.export_notes)
         action_layout.addWidget(btn_export_notes)
@@ -196,11 +232,99 @@ class SubjectView(QWidget):
         layout.addLayout(right_layout, stretch=2.5)
 
         self.refresh()
-    
+
+    def start_study_selected(self):
+        """Inicia a sessão de estudo para o bloco selecionado ou o primeiro bloco do tópico."""
+        current_item = self.tree_topics.currentItem()
+        if not current_item:
+            QMessageBox.warning(self, "Aviso", "Selecione um tópico ou bloco para iniciar o estudo.")
+            return
+
+        item_type = current_item.data(0, Qt.UserRole + 1)
+        
+        if item_type == "BLOCK":
+            block_id = current_item.data(0, Qt.UserRole)
+            if block_id:
+                self.start_study_signal.emit(block_id)
+        elif item_type == "TOPIC":
+            topic_id = current_item.data(0, Qt.UserRole)
+            # Busca o primeiro bloco pendente/em andamento deste tópico
+            db = SessionLocal()
+            block = db.query(StudyBlock).filter(
+                StudyBlock.topic_id == topic_id,
+                StudyBlock.status != BlockStatus.IGNORADO
+            ).order_by(StudyBlock.page_start.asc()).first()
+            db.close()
+
+            if block:
+                self.start_study_signal.emit(block.id)
+            else:
+                QMessageBox.information(self, "Aviso", "Não há blocos de estudo disponíveis para este tópico.")
+
+    def on_item_double_clicked(self, item, column):
+        """Ação ao dar dois cliques em um item da árvore."""
+        self.start_study_selected()
+
+    def load_topics(self, subject_id):
+        """Carrega todos os tópicos e subtópicos em uma única consulta otimizada."""
+        self.tree_topics.clear()
+        db = SessionLocal()
+        subj = db.query(Subject).filter(Subject.id == subject_id).first()
+        if not subj:
+            db.close()
+            return
+
+        self.lbl_title.setText(f"<b style='color: #3498DB;'>{subj.name}</b> <span style='color: #BDC3C7;'>- Tópicos e PDFs</span>")
+
+        all_topics = (
+            db.query(Topic)
+            .join(PdfDocument)
+            .options(joinedload(Topic.blocks))
+            .filter(PdfDocument.subject_id == subject_id)
+            .order_by(Topic.order.asc(), Topic.id.asc())
+            .all()
+        )
+
+        topics_by_parent = {}
+        for t in all_topics:
+            topics_by_parent.setdefault(t.parent_id, []).append(t)
+
+        def add_nodes(parent_item, parent_id):
+            for t in topics_by_parent.get(parent_id, []):
+                item = QTreeWidgetItem([f"🔖 {t.title}", ""])
+                item.setData(0, Qt.UserRole, t.id)
+                item.setData(0, Qt.UserRole + 1, "TOPIC")
+                
+                if t.blocks:
+                    sorted_blocks = sorted(t.blocks, key=lambda b: b.page_start)
+                    for b in sorted_blocks:
+                        status_str = "⏳ Pendente"
+                        if b.status == BlockStatus.EM_ANDAMENTO:
+                            status_str = "▶️ Em Andamento"
+                        elif b.status == BlockStatus.CONCLUIDO:
+                            status_str = "✅ Concluído"
+                        elif b.status == BlockStatus.IGNORADO:
+                            status_str = "🚫 Ignorado"
+
+                        block_item = QTreeWidgetItem([f"   ↳ Bloco (Págs {b.page_start} - {b.page_end})", status_str])
+                        block_item.setData(0, Qt.UserRole, b.id)  # Guarda o ID do bloco
+                        block_item.setData(0, Qt.UserRole + 1, "BLOCK")
+                        item.addChild(block_item)
+
+                if parent_item:
+                    parent_item.addChild(item)
+                else:
+                    self.tree_topics.addTopLevelItem(item)
+
+                add_nodes(item, t.id)
+
+        add_nodes(None, None)
+        self.tree_topics.expandAll()
+        db.close()
+
     def export_notes(self):
-        """Exporta as anotações em formato TXT/Markdown por Tópico ou Matéria Inteira."""
         if not self.selected_subject_id:
-            QMessageBox.warning(self, "Aviso", "Selecione uma matéria para exportar as anotações.")
+            QMessageBox.warning(self, "Aviso", "Selecione uma matéria para visualizar o resumo.")
             return
 
         db = SessionLocal()
@@ -215,83 +339,87 @@ class SubjectView(QWidget):
             if not subj:
                 return
 
-            # Pergunta onde salvar o arquivo
-            default_filename = f"Anotacoes_{subj.name}.txt" if not selected_topic_id else "Anotacoes_Topico.txt"
-            file_path, _ = QFileDialog.getSaveFileName(
-                self, 
-                "Exportar Anotações", 
-                default_filename, 
-                "Arquivo de Texto (*.txt);;Markdown (*.md)"
+            query = (
+                db.query(Topic)
+                .join(PdfDocument)
+                .options(
+                    subqueryload(Topic.blocks).subqueryload(StudyBlock.notes),
+                    joinedload(Topic.pdf).subqueryload(PdfDocument.highlights)
+                )
+                .filter(PdfDocument.subject_id == self.selected_subject_id)
             )
 
-            if not file_path:
-                return
-
-            lines = []
-            lines.append(f"# ANOTAÇÕES DE ESTUDO: {subj.name.upper()}\n")
-            lines.append("=" * 60 + "\n\n")
-
-            # Filtra tópicos: um específico ou todos da matéria
             if selected_topic_id:
-                topics = db.query(Topic).filter(Topic.id == selected_topic_id).all()
+                topics = query.filter(Topic.id == selected_topic_id).all()
             else:
-                topics = (
-                    db.query(Topic)
-                    .join(PdfDocument)
-                    .filter(PdfDocument.subject_id == self.selected_subject_id)
-                    .all()
-                )
+                topics = query.order_by(Topic.order.asc(), Topic.id.asc()).all()
 
-            total_notes_count = 0
+            lines_md = [f"# Resumo de Estudos: {subj.name}\n\n"]
+            lines_txt = [f"# RESUMO DE ESTUDOS: {subj.name.upper()}\n", "=" * 60 + "\n\n"]
+
+            total_items_count = 0
 
             for topic in topics:
-                lines.append(f"📌 TÓPICO: {topic.title}\n")
-                lines.append("-" * 40 + "\n")
+                has_topic_header = False
 
-                # Busca todos os blocos do tópico
-                blocks = db.query(StudyBlock).filter(StudyBlock.topic_id == topic.id).all()
-                
-                for block in blocks:
-                    # Verifica se o modelo do bloco possui campo/relacionamento de anotações
-                    # (Ajuste 'notes' ou 'annotation' conforme a coluna/relacionamento na sua Model StudyBlock)
-                    notes = getattr(block, 'notes', getattr(block, 'annotations', None))
+                def ensure_topic_header():
+                    nonlocal has_topic_header
+                    if not has_topic_header:
+                        lines_md.append(f"## 📌 Tópico: {topic.title}\n\n")
+                        lines_txt.append(f"📌 TÓPICO: {topic.title}\n" + "-" * 40 + "\n")
+                        has_topic_header = True
 
-                    if notes:
-                        page_start = getattr(block, 'page_start', getattr(block, 'start_page', 1))
-                        page_end = getattr(block, 'page_end', getattr(block, 'end_page', 1))
-                        
-                        lines.append(f"  • Bloco (Págs {page_start} - {page_end}):\n")
-                        
-                        # Se as anotações forem uma lista de objetos ou uma string simples
-                        if isinstance(notes, list):
-                            for note in notes:
-                                note_text = getattr(note, 'content', str(note))
-                                lines.append(f"    - {note_text}\n")
-                                total_notes_count += 1
-                        else:
-                            lines.append(f"    {notes}\n")
-                            total_notes_count += 1
-                        
-                        lines.append("\n")
+                for block in topic.blocks:
+                    if block.notes:
+                        ensure_topic_header()
+                        lines_md.append(f"### 📄 Bloco (Págs. {block.page_start} - {block.page_end}) - Anotações\n")
+                        lines_txt.append(f"  • Bloco (Págs {block.page_start} - {block.page_end}) - Anotações:\n")
 
-                lines.append("\n")
+                        for note in block.notes:
+                            note_text = note.content.strip()
+                            lines_md.append(f"- **[Pág. {note.page_number}]**: {note_text}\n")
+                            lines_txt.append(f"    - [Pág. {note.page_number}]: {note_text}\n")
+                            total_items_count += 1
 
-            if total_notes_count == 0:
-                QMessageBox.information(self, "Exportação", "Nenhuma anotação encontrada para o escopo selecionado.")
+                        lines_md.append("\n")
+                        lines_txt.append("\n")
+
+                if topic.pdf and topic.pdf.highlights:
+                    topic_highlights = [
+                        h for h in topic.pdf.highlights 
+                        if topic.page_start <= h.page_number <= topic.page_end and h.selected_text
+                    ]
+
+                    if topic_highlights:
+                        ensure_topic_header()
+                        lines_md.append("### 🖍️ Trechos Grifados\n")
+                        lines_txt.append("  • Trechos Grifados:\n")
+
+                        topic_highlights.sort(key=lambda h: h.page_number)
+
+                        for hl in topic_highlights:
+                            highlight_text = hl.selected_text.strip().replace("\n", " ")
+                            lines_md.append(f"> **[Pág. {hl.page_number}]** _{highlight_text}_\n\n")
+                            lines_txt.append(f'    - [Pág. {hl.page_number}]: "{highlight_text}"\n')
+                            total_items_count += 1
+
+                        lines_md.append("\n")
+                        lines_txt.append("\n")
+
+            if total_items_count == 0:
+                QMessageBox.information(self, "Exportação", "Nenhuma anotação ou grifo foi encontrado para este escopo.")
                 return
 
-            # Escreve o conteúdo no arquivo escolhido
-            with open(file_path, "w", encoding="utf-8") as f:
-                f.writelines(lines)
-
-            QMessageBox.information(
-                self, 
-                "Sucesso", 
-                f"Anotações exportadas com sucesso!\n\nSalvo em: {file_path}"
+            preview_dialog = NotesPreviewDialog(
+                subject_name=subj.name,
+                content_md="".join(lines_md),
+                content_txt="".join(lines_txt),
+                parent=self
             )
+            preview_dialog.exec()
 
         except Exception as e:
-            QMessageBox.critical(self, "Erro", f"Falha ao exportar anotações: {str(e)}")
+            QMessageBox.critical(self, "Erro", f"Falha ao carregar anotações e grifos: {str(e)}")
         finally:
             db.close()
 
@@ -372,66 +500,7 @@ class SubjectView(QWidget):
         self.selected_subject_id = subj_id
         self.load_topics(subj_id)
 
-    def load_topics(self, subject_id):
-        self.tree_topics.clear()
-        db = SessionLocal()
-        subj = db.query(Subject).filter(Subject.id == subject_id).first()
-        if not subj:
-            db.close()
-            return
-
-        self.lbl_title.setText(f"<b style='color: #3498DB;'>{subj.name}</b> <span style='color: #BDC3C7;'>- Tópicos e PDFs</span>")
-
-        # Tenta ordenar pelo campo 'order' se existir na Model, caso contrário usa ID
-        query = db.query(Topic).join(PdfDocument).filter(PdfDocument.subject_id == subject_id, Topic.parent_id.is_(None))
-        if hasattr(Topic, 'order'):
-            topics = query.order_by(Topic.order.asc(), Topic.id.asc()).all()
-        else:
-            topics = query.order_by(Topic.id.asc()).all()
-        
-        def add_nodes(parent_item, topic_list):
-            for t in topic_list:
-                item = QTreeWidgetItem([f"🔖 {t.title}", ""])
-                item.setData(0, Qt.UserRole, t.id)
-                # Define flag indicando que é um Tópico
-                item.setData(0, Qt.UserRole + 1, "TOPIC")
-                
-                blocks = db.query(StudyBlock).filter(StudyBlock.topic_id == t.id).order_by(StudyBlock.page_start.asc()).all()
-                if blocks:
-                    for b in blocks:
-                        page_start = getattr(b, 'page_start', getattr(b, 'start_page', 1))
-                        page_end = getattr(b, 'page_end', getattr(b, 'end_page', 1))
-                        
-                        status_str = "⏳ Pendente"
-                        if b.status == BlockStatus.EM_ANDAMENTO:
-                            status_str = "▶️ Em Andamento"
-                        elif b.status == BlockStatus.CONCLUIDO:
-                            status_str = "✅ Concluído"
-
-                        block_item = QTreeWidgetItem([f"   ↳ Bloco (Págs {page_start} - {page_end})", status_str])
-                        block_item.setData(0, Qt.UserRole + 1, "BLOCK")
-                        item.addChild(block_item)
-
-                if parent_item:
-                    parent_item.addChild(item)
-                else:
-                    self.tree_topics.addTopLevelItem(item)
-
-                sub_query = db.query(Topic).filter(Topic.parent_id == t.id)
-                if hasattr(Topic, 'order'):
-                    subtopics = sub_query.order_by(Topic.order.asc(), Topic.id.asc()).all()
-                else:
-                    subtopics = sub_query.all()
-
-                if subtopics:
-                    add_nodes(item, subtopics)
-
-        add_nodes(None, topics)
-        self.tree_topics.expandAll()
-        db.close()
-
     def move_topic(self, direction):
-        """Move o tópico selecionado para cima (-1) ou para baixo (+1)."""
         current_item = self.tree_topics.currentItem()
         if not current_item or current_item.data(0, Qt.UserRole + 1) != "TOPIC":
             return
@@ -456,20 +525,27 @@ class SubjectView(QWidget):
 
     def save_topics_order(self):
         """Salva a nova sequência de exibição dos tópicos no banco de dados."""
-        if not hasattr(Topic, 'order'):
-            return
-
         db = SessionLocal()
         try:
-            for i in range(self.tree_topics.topLevelItemCount()):
-                item = self.tree_topics.topLevelItem(i)
-                topic_id = item.data(0, Qt.UserRole)
-                if topic_id:
-                    t = db.query(Topic).filter(Topic.id == topic_id).first()
-                    if t:
-                        t.order = i
+            def sync_item_order(parent_item=None):
+                count = parent_item.childCount() if parent_item else self.tree_topics.topLevelItemCount()
+                for i in range(count):
+                    item = parent_item.child(i) if parent_item else self.tree_topics.topLevelItem(i)
+                    topic_id = item.data(0, Qt.UserRole)
+                    item_type = item.data(0, Qt.UserRole + 1)
+                    
+                    if topic_id and item_type == "TOPIC":
+                        t = db.query(Topic).filter(Topic.id == topic_id).first()
+                        if t:
+                            t.order = i
+                            parent_topic_id = parent_item.data(0, Qt.UserRole) if parent_item else None
+                            t.parent_id = parent_topic_id
+                        
+                        sync_item_order(item)
+
+            sync_item_order(None)
             db.commit()
-        except Exception as e:
+        except Exception:
             db.rollback()
         finally:
             db.close()
@@ -507,23 +583,16 @@ class SubjectView(QWidget):
             db.add(pdf_doc)
             db.flush()
 
-            # Define a ordem como a maior ordem atual + 1
-            max_order = 0
-            if hasattr(Topic, 'order'):
-                last_t = db.query(Topic).order_by(Topic.order.desc()).first()
-                if last_t and last_t.order is not None:
-                    max_order = last_t.order + 1
+            last_t = db.query(Topic).order_by(Topic.order.desc()).first()
+            max_order = (last_t.order + 1) if (last_t and last_t.order is not None) else 0
 
-            topic_kwargs = {
-                "pdf_id": pdf_doc.id,
-                "title": topic_title,
-                "page_start": 1,
-                "page_end": total_pages
-            }
-            if hasattr(Topic, 'order'):
-                topic_kwargs["order"] = max_order
-
-            topic = Topic(**topic_kwargs)
+            topic = Topic(
+                pdf_id=pdf_doc.id,
+                title=topic_title,
+                page_start=1,
+                page_end=total_pages,
+                order=max_order
+            )
             db.add(topic)
             db.flush()
 
@@ -581,7 +650,16 @@ class SubjectView(QWidget):
                         recursive_delete(sub.id)
                     
                     db.query(StudyBlock).filter(StudyBlock.topic_id == t_id).delete()
+                    
+                    topic = db.query(Topic).filter(Topic.id == t_id).first()
+                    pdf_id = topic.pdf_id if topic else None
+                    
                     db.query(Topic).filter(Topic.id == t_id).delete()
+                    
+                    if pdf_id:
+                        other_topics = db.query(Topic).filter(Topic.pdf_id == pdf_id).count()
+                        if other_topics == 0:
+                            db.query(PdfDocument).filter(PdfDocument.id == pdf_id).delete()
 
                 recursive_delete(topic_id)
                 db.commit()
@@ -615,8 +693,7 @@ class SubjectView(QWidget):
                 )
                 for b in blocks:
                     b.status = BlockStatus.PENDENTE
-                    start_p = getattr(b, 'page_start', getattr(b, 'start_page', 1))
-                    b.current_page = start_p
+                    b.current_page = b.page_start
                 db.commit()
                 QMessageBox.information(self, "Sucesso", "Progresso da matéria zerado com sucesso!")
                 self.load_topics(self.selected_subject_id)

@@ -13,7 +13,7 @@ from services.study_manager import StudyManager
 
 
 class PDFSelectableLabel(QLabel):
-    """Custom Label supporting mouse drag selection and click detection for highlights."""
+    
     area_selected = Signal(QRect)
     point_clicked = Signal(QPoint)
 
@@ -46,7 +46,7 @@ class PDFSelectableLabel(QLabel):
             
             rect = QRect(self.selection_start, self.selection_end).normalized()
             
-            # Se for um clique (arraste insignificante), dispara sinal de clique
+           
             if rect.width() <= 5 and rect.height() <= 5:
                 self.point_clicked.emit(self.selection_start)
             else:
@@ -121,9 +121,7 @@ class StudyReaderView(QWidget):
 
         QShortcut(QKeySequence("Ctrl+D"), self, lambda: self.btn_dark_mode.animateClick())
 
-        # --------------------------------------------------------
-        # NOVOS ATALHOS: Seleção de Cor de Grifo (1, 2, 3, 4)
-        # --------------------------------------------------------
+    
         QShortcut(QKeySequence("1"), self, lambda: self.set_highlight_color("#FFFF00")) # Amarelo 🟡
         QShortcut(QKeySequence("2"), self, lambda: self.set_highlight_color("#2ECC71")) # Verde 🟢
         QShortcut(QKeySequence("3"), self, lambda: self.set_highlight_color("#3498DB")) # Azul 🔵
@@ -160,8 +158,6 @@ class StudyReaderView(QWidget):
         
         pdf_container.addWidget(self.scroll_area)
         
-        # Você pode adicionar no 'tools_layout' (ao lado dos botões de grifo):
-        tools_layout.addWidget(self.btn_dark_mode)
 
         # --------------------------------------------------------
         # REORGANIZAÇÃO: BARRA 1 (Navegação & Zoom)
@@ -582,6 +578,9 @@ class StudyReaderView(QWidget):
                 self.current_page = max(0, saved_page - 1)
                 self.render_page()
                 self.load_current_page_notes()
+                
+                # Inicia o cronômetro aqui de forma limpa após o carregamento do bloco
+                self.start_timer()
         except Exception as e:
             QMessageBox.critical(self, "Erro", f"Não foi possível abrir o PDF: {str(e)}")
         finally:
@@ -692,16 +691,14 @@ class StudyReaderView(QWidget):
         else:
             qimg = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format_RGB888).copy()
 
+        # Renderiza a imagem ajustada no QLabel de uma única vez
         pixmap = QPixmap.fromImage(qimg)
         self.lbl_pdf_page.setPixmap(pixmap)
         
-        qimg = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format_RGB888).copy()
-        pixmap = QPixmap.fromImage(qimg)
-
-        self.lbl_pdf_page.setPixmap(pixmap)
+        # Atualiza informações da interface
         self.lbl_page_info.setText(f"Página: {self.current_page + 1} / {self.total_pages}")
         self.load_current_page_notes()
-        self.start_timer()
+    
 
         curr_1based = self.current_page + 1
         total_block_pages = max(1, (self.page_end - self.page_start + 1))
@@ -903,7 +900,10 @@ class StudyReaderView(QWidget):
             QMessageBox.critical(self, "Erro", f"Erro ao avançar bloco: {str(e)}")
 
     def start_timer(self):
-        self.timer.start(1000)
+        # Se o timer NÃO estiver rodando, inicia
+        if not self.timer.isActive():
+            self.timer.start(1000)
+
         if self.block_id:
             db = SessionLocal()
             try:

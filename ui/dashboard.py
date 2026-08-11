@@ -56,15 +56,14 @@ class DashboardView(QWidget):
         """)
         layout.addWidget(lbl_app_title)
 
-        # 2. FEATURE NOVA: Linha de KPIs / Estatísticas Rápidas
+        # 2. Linha de KPIs / Estatísticas Rápidas
         kpi_layout = QHBoxLayout()
         kpi_layout.setSpacing(10)
 
         self.card_pages, self.lbl_kpi_pages = self._create_kpi_card("📄 PÁGINAS LIDAS")
         self.card_blocks, self.lbl_kpi_blocks = self._create_kpi_card("🧩 BLOCOS CONCLUÍDOS")
         self.card_overall, self.lbl_kpi_overall = self._create_kpi_card("🎯 PROGRESSO GERAL")
-  
-        self.card_time, self.lbl_kpi_time = self._create_kpi_card("⏳ TEMPO ESTIMADO")
+        self.card_time, self.lbl_kpi_time = self._create_kpi_card("⏳ TEMPO INVESTIDO")
 
         kpi_layout.addWidget(self.card_pages)
         kpi_layout.addWidget(self.card_blocks)
@@ -72,9 +71,6 @@ class DashboardView(QWidget):
         kpi_layout.addWidget(self.card_time)
 
         layout.addLayout(kpi_layout)
-
-        
-        
 
         # 3. Card Continuar (Recomendação Geral)
         self.continue_card = QGroupBox("▶ CONTINUAR CICLO PRINCIPAL")
@@ -128,6 +124,72 @@ class DashboardView(QWidget):
         self.btn_start.clicked.connect(self.on_start_clicked)
         card_layout.addWidget(self.btn_start)
 
+        # Retomar Estudo Interrompido
+        self.btn_resume_last = QPushButton("🔄 Retomar De Onde Parou")
+        self.btn_resume_last.setCursor(Qt.PointingHandCursor)
+        self.btn_resume_last.setStyleSheet("""
+            QPushButton {
+                background-color: #E67E22;
+                color: #FFFFFF;
+                font-weight: bold;
+                font-size: 12px;
+                padding: 8px;
+                border-radius: 5px;
+                margin-top: 5px;
+            }
+            QPushButton:hover {
+                background-color: #D35400;
+            }
+            QPushButton:disabled {
+                background-color: #7F8C8D;
+                color: #BDC3C7;
+            }
+        """)
+        self.btn_resume_last.clicked.connect(self.start_in_progress_block)
+        card_layout.addWidget(self.btn_resume_last)
+
+        # Botões de Ações Rápidas
+        quick_actions_layout = QHBoxLayout()
+        quick_actions_layout.setSpacing(8)
+
+        btn_short_block = QPushButton("⚡ Bloco Curto")
+        btn_short_block.setCursor(Qt.PointingHandCursor)
+        btn_short_block.setStyleSheet("""
+            QPushButton {
+                background-color: #34495E; color: #ECF0F1; 
+                padding: 6px; border-radius: 4px; font-weight: bold; font-size: 11px;
+            }
+            QPushButton:hover { background-color: #4E657A; }
+        """)
+        btn_short_block.clicked.connect(self.start_short_block)
+
+        btn_long_block = QPushButton("🐘 Bloco Longo")
+        btn_long_block.setCursor(Qt.PointingHandCursor)
+        btn_long_block.setStyleSheet("""
+            QPushButton {
+                background-color: #34495E; color: #ECF0F1; 
+                padding: 6px; border-radius: 4px; font-weight: bold; font-size: 11px;
+            }
+            QPushButton:hover { background-color: #4E657A; }
+        """)
+        btn_long_block.clicked.connect(self.start_long_block)
+
+        btn_random_block = QPushButton("🎲 Aleatório")
+        btn_random_block.setCursor(Qt.PointingHandCursor)
+        btn_random_block.setStyleSheet("""
+            QPushButton {
+                background-color: #34495E; color: #ECF0F1; 
+                padding: 6px; border-radius: 4px; font-weight: bold; font-size: 11px;
+            }
+            QPushButton:hover { background-color: #4E657A; }
+        """)
+        btn_random_block.clicked.connect(self.start_random_block)
+
+        quick_actions_layout.addWidget(btn_short_block)
+        quick_actions_layout.addWidget(btn_long_block)
+        quick_actions_layout.addWidget(btn_random_block)
+
+        card_layout.addLayout(quick_actions_layout)
         layout.addWidget(self.continue_card)
 
         # 4. Seção de Progresso por Matéria
@@ -179,79 +241,6 @@ class DashboardView(QWidget):
             }
         """)
 
-        # --- Na construção da UI (init_ui) ---
-        quick_actions_layout = QHBoxLayout()
-        quick_actions_layout.setSpacing(8)
-
-        # 1. Bloco Curto
-        btn_short_block = QPushButton("⚡ Bloco Curto")
-        btn_short_block.setCursor(Qt.PointingHandCursor)
-        btn_short_block.setStyleSheet("""
-            QPushButton {
-                background-color: #34495E; color: #ECF0F1; 
-                padding: 6px; border-radius: 4px; font-weight: bold; font-size: 11px;
-            }
-            QPushButton:hover { background-color: #4E657A; }
-        """)
-        btn_short_block.clicked.connect(self.start_short_block)
-
-        # 2. Bloco Longo (Novo!)
-        btn_long_block = QPushButton("🐘 Bloco Longo")
-        btn_long_block.setCursor(Qt.PointingHandCursor)
-        btn_long_block.setStyleSheet("""
-            QPushButton {
-                background-color: #34495E; color: #ECF0F1; 
-                padding: 6px; border-radius: 4px; font-weight: bold; font-size: 11px;
-            }
-            QPushButton:hover { background-color: #4E657A; }
-        """)
-        btn_long_block.clicked.connect(self.start_long_block)
-
-        # 3. Bloco Aleatório
-        btn_random_block = QPushButton("🎲 Aleatório")
-        btn_random_block.setCursor(Qt.PointingHandCursor)
-        btn_random_block.setStyleSheet("""
-            QPushButton {
-                background-color: #34495E; color: #ECF0F1; 
-                padding: 6px; border-radius: 4px; font-weight: bold; font-size: 11px;
-            }
-            QPushButton:hover { background-color: #4E657A; }
-        """)
-        btn_random_block.clicked.connect(self.start_random_block)
-
-        # Adiciona os 3 botões lado a lado
-        quick_actions_layout.addWidget(btn_short_block)
-        quick_actions_layout.addWidget(btn_long_block)
-        quick_actions_layout.addWidget(btn_random_block)
-
-        card_layout.addLayout(quick_actions_layout)
-
-                # Botão para retomar estudo que ficou pela metade
-        self.btn_resume_last = QPushButton("🔄 Retomar De Onde Parou")
-        self.btn_resume_last.setCursor(Qt.PointingHandCursor)
-        self.btn_resume_last.setStyleSheet("""
-            QPushButton {
-                background-color: #E67E22;
-                color: #FFFFFF;
-                font-weight: bold;
-                font-size: 12px;
-                padding: 8px;
-                border-radius: 5px;
-                margin-top: 5px;
-            }
-            QPushButton:hover {
-                background-color: #D35400;
-            }
-            QPushButton:disabled {
-                background-color: #7F8C8D;
-                color: #BDC3C7;
-            }
-        """)
-        self.btn_resume_last.clicked.connect(self.start_in_progress_block)
-
-        # Adiciona no card_layout (acima das ações rápidas)
-        card_layout.addWidget(self.btn_resume_last)
-
         self.scroll_content = QWidget()
         self.scroll_content.setStyleSheet("background-color: transparent;")
         self.prog_layout = QVBoxLayout(self.scroll_content)
@@ -264,7 +253,7 @@ class DashboardView(QWidget):
         layout.addWidget(prog_group)
 
         self.refresh()
-    
+
     def start_in_progress_block(self):
         """Abre direto o último bloco que ficou no meio do caminho."""
         db = SessionLocal()
@@ -289,7 +278,6 @@ class DashboardView(QWidget):
             block = (
                 db.query(StudyBlock)
                 .filter(StudyBlock.status == BlockStatus.PENDENTE)
-                # Ordena do maior número de páginas para o menor (.desc())
                 .order_by((StudyBlock.page_end - StudyBlock.page_start).desc())
                 .first()
             )
@@ -324,7 +312,7 @@ class DashboardView(QWidget):
             block = (
                 db.query(StudyBlock)
                 .filter(StudyBlock.status == BlockStatus.PENDENTE)
-                .order_by(func.random())  # func.rand() se for SQLite/PostgreSQL
+                .order_by(func.random())
                 .first()
             )
             if block:
@@ -337,13 +325,11 @@ class DashboardView(QWidget):
     def refresh(self):
         db = SessionLocal()
         try:
-
-            
-
+            # 1. Bloco em Andamento para o Botão "Retomar"
             in_progress_block = (
                 db.query(StudyBlock)
                 .filter(StudyBlock.status == BlockStatus.EM_ANDAMENTO)
-                .order_by(StudyBlock.id.desc()) # Pega o mais recente
+                .order_by(StudyBlock.id.desc())
                 .first()
             )
 
@@ -354,30 +340,32 @@ class DashboardView(QWidget):
             else:
                 self.btn_resume_last.setEnabled(False)
                 self.btn_resume_last.setText("🔄 Nenhum Estudo Interrompido")
-            # --- CÁLCULO DAS MÉTRICAS GERAIS (NOVA FEATURE) ---
+
+            # 2. Métricas Gerais (KPIs)
             all_blocks = db.query(StudyBlock).all()
             total_b = len(all_blocks)
-            
-            
             done_b_list = [b for b in all_blocks if b.status == BlockStatus.CONCLUIDO]
             done_b = len(done_b_list)
 
-            # No método refresh(), ao calcular o progresso geral:
-            pending_b = total_b - done_b
-            estimated_hours = round((pending_b * 25) / 60, 1)
-
-            # Se você criou os cards de estatística no topo:
-            self.lbl_kpi_time.setText(f"~{estimated_hours}h restantes")
-
-            # Soma de páginas lidas nos blocos concluídos
             pages_read = sum((b.page_end - b.page_start + 1) for b in done_b_list)
             overall_pct = int((done_b / total_b) * 100) if total_b > 0 else 0
+
+            # Soma o tempo acumulado em segundos nos blocos
+            total_seconds = sum(b.time_spent_seconds or 0 for b in all_blocks)
+            hours = total_seconds // 3600
+            minutes = (total_seconds % 3600) // 60
+
+            if hours > 0:
+                time_str = f"{hours}h {minutes}m"
+            else:
+                time_str = f"{minutes} min"
 
             self.lbl_kpi_pages.setText(f"{pages_read} pág(s)")
             self.lbl_kpi_blocks.setText(f"{done_b} / {total_b}")
             self.lbl_kpi_overall.setText(f"{overall_pct}%")
+            self.lbl_kpi_time.setText(time_str)
 
-            # 1. Atualiza o bloco recomendado
+            # 3. Bloco Recomendado (Próximo do Ciclo)
             next_block = (
                 db.query(StudyBlock)
                 .join(Topic)
@@ -411,12 +399,14 @@ class DashboardView(QWidget):
                 self.lbl_info.setText("Parabéns! Todos os blocos cadastrados foram concluídos.")
                 self.btn_start.setEnabled(False)
 
-            # 2. Renderiza a lista por matéria
-            for i in reversed(range(self.prog_layout.count())): 
-                item = self.prog_layout.itemAt(i)
-                if item.widget():
-                    item.widget().deleteLater()
+            # 4. Limpeza Adequada da Lista por Matéria
+            while self.prog_layout.count():
+                item = self.prog_layout.takeAt(0)
+                widget = item.widget()
+                if widget:
+                    widget.deleteLater()
 
+            # 5. Renderização Otimizada por Matéria
             subjects = db.query(Subject).all()
             for s in subjects:
                 sub_total = db.query(StudyBlock).join(Topic).join(PdfDocument).filter(PdfDocument.subject_id == s.id).count()
@@ -427,7 +417,9 @@ class DashboardView(QWidget):
 
                 pct = int((sub_done / sub_total) * 100) if sub_total > 0 else 0
 
-                row = QHBoxLayout()
+                container = QWidget()
+                row = QHBoxLayout(container)
+                row.setContentsMargins(0, 0, 0, 0)
                 
                 lbl = QLabel(s.name)
                 lbl.setMinimumWidth(150)
@@ -481,9 +473,6 @@ class DashboardView(QWidget):
                     btn_study_subj.clicked.connect(lambda checked=False, subj_id=s.id: self.start_subject_study(subj_id))
 
                 row.addWidget(btn_study_subj)
-                
-                container = QWidget()
-                container.setLayout(row)
                 self.prog_layout.addWidget(container)
 
             self.prog_layout.addStretch()

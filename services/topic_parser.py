@@ -2,36 +2,38 @@ import pymupdf as fitz
 import re
 
 class TopicParser:
-    @staticmethod
-    def parse_toc(file_path: str, toc_pages: list[int], total_pages: int):
-        doc = fitz.open(file_path)
+    @classmethod
+    def parse_toc(cls, file_path: str, toc_pages: list[int], total_pages: int):
+        try:
+            doc = fitz.open(file_path)
+        except Exception:
+            return cls._generate_fallback_topics(total_pages)
+
         raw_topics = []
 
-        # -------------------------------------------------------------
-        # CAMADA 1: Tenta ler o índice NATIVO (Bookmarks do PDF)
-        # -------------------------------------------------------------
-        native_toc = doc.get_toc(simple=True)  # Retorna [level, title, page]
-        if native_toc:
-            for item in native_toc:
-                title = item[1].strip()
-                page_start = item[2]
-                if 1 <= page_start <= total_pages and len(title) > 2:
-                    raw_topics.append({
-                        "title": title,
-                        "page_start": page_start
-                    })
+        # --- CAMADA 1: Bookmarks Nativos ---
+        try:
+            native_toc = doc.get_toc(simple=True)
+            if native_toc:
+                for item in native_toc:
+                    title = item[1].strip()
+                    page_start = item[2]
+                    if 1 <= page_start <= total_pages and len(title) > 2:
+                        raw_topics.append({
+                            "title": title,
+                            "page_start": page_start
+                        })
+        except Exception:
+            pass
 
-        # -------------------------------------------------------------
-        # CAMADA 2: Fallback por Regex (se não houver bookmarks nativos)
-        # -------------------------------------------------------------
-        if not raw_topics:
+        # --- CAMADA 2: Regex nas Páginas do Sumário Detectado ---
+        if not raw_topics and toc_pages:
             raw_lines = []
             for p in toc_pages:
                 if p < len(doc):
                     text = doc[p].get_text("text")
                     raw_lines.extend(text.splitlines())
 
-            # Regex universal: Captura "Título ..... Páginas" ou "Título 15"
             pattern = re.compile(r'^\s*(.*?)\s*[\.\s…\-]+\s*(\d+)\s*$')
 
             for line in raw_lines:
@@ -43,7 +45,6 @@ class TopicParser:
                     title = match.group(1).strip()
                     page_start = int(match.group(2))
                     
-                    # Descarta linhas do tipo "Página" isolada ou fora do limite do PDF
                     if len(title) > 2 and 1 <= page_start <= total_pages:
                         raw_topics.append({
                             "title": title,
@@ -52,31 +53,20 @@ class TopicParser:
 
         doc.close()
 
+        # --- CAMADA 3: Fallback Inteligente caso falhem as camadas 1 e 2 ---
         if not raw_topics:
-            return []
+            return cls._generate_fallback_topics(total_pages)
 
-        # -------------------------------------------------------------
-        # CAMADA 3: Tratamento de Hierarquia e Sobreposição de Páginas
-        # -------------------------------------------------------------
-        # Remove redundâncias de tópicos "pai" que começam exatamente na mesma página
-        # que um tópico "filho" (Ex: Aula na pág 6 e Subtópico 1 na pág 6).
+        # --- Processamento Normal de Sobreposição e Cálculo de page_end ---
         cleaned_topics = []
         for i in range(len(raw_topics)):
             curr = raw_topics[i]
-            
-            # Se não for o último, verifica se o próximo começa na MESMA página
             if i < len(raw_topics) - 1:
                 nxt = raw_topics[i + 1]
-                # Se o próximo tem o mesmo page_start, o atual é apenas um Título de Capítulo
-                # Mantemos o próximo por ser o subtópico específico
                 if curr["page_start"] == nxt["page_start"]:
                     continue
-
             cleaned_topics.append(curr)
 
-        # -------------------------------------------------------------
-        # CAMADA 4: Cálculo do page_end Dinâmico
-        # -------------------------------------------------------------
         final_topics = []
         for i in range(len(cleaned_topics)):
             curr_title = cleaned_topics[i]["title"]
@@ -84,10 +74,8 @@ class TopicParser:
 
             if i < len(cleaned_topics) - 1:
                 next_start = cleaned_topics[i + 1]["page_start"]
-                # Garante que page_end seja ao menos igual ao page_start
                 curr_end = max(curr_start, next_start - 1)
             else:
-                # O último tópico vai até o final do PDF
                 curr_end = total_pages
 
             final_topics.append({
@@ -97,3 +85,26 @@ class TopicParser:
             })
 
         return final_topics
+
+    @staticmethod
+    def _generate_fallback_topics(total_pages: int, chunk_size: int = 15) -> list[dict]:
+        """
+        Gera tópicos genéricos baseados em blocos de páginas caso o PDF seja escaneado
+        ou não tenha estrutura de sumário extraível.
+        """
+        if total_pages <= 0:
+            return [{"title": "Leitura Completa", "page_start": 1, "page_end": 1}]
+
+        topics = []
+        part = 1
+        
+        for start in range(1, total_pages + 1, chunk_size):
+            end = min(start + chunk_size - 1, total_pages)
+            topics.append({
+                "title": f"Parte {part} (Págs. {start}-{end})",
+                "page_start": start,
+                "page_end": end
+            })
+            part += 1
+
+        return topics
