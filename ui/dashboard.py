@@ -1,10 +1,12 @@
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-                             QPushButton, QProgressBar, QGroupBox, QMessageBox, QScrollArea, QFrame)
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
+    QPushButton, QProgressBar, QGroupBox, QMessageBox, QScrollArea, QFrame
+)
 from PySide6.QtCore import Qt, Signal
 from database.connection import SessionLocal
-from services.study_manager import StudyManager
 from models.models import Subject, StudyBlock, BlockStatus, Topic, PdfDocument
 from sqlalchemy.sql.expression import func
+
 
 class DashboardView(QWidget):
     start_study_signal = Signal(int)
@@ -14,56 +16,64 @@ class DashboardView(QWidget):
         self.current_block_id = None
         self.init_ui()
 
-    def _create_kpi_card(self, title: str, initial_val: str = "0"):
-        """Cria um card simples de métrica com visual moderno."""
+    def _create_kpi_card(self, title: str, initial_val: str = "0", val_color: str = "#89B4FA"):
+        """Cria um card de métrica (KPI) moderno com visual Catppuccin."""
         card = QFrame()
         card.setStyleSheet("""
             QFrame {
-                background-color: #1E222A;
-                border: 1px solid #2C3E50;
-                border-radius: 8px;
-                padding: 10px;
+                background-color: #181825;
+                border: 1px solid #313244;
+                border-radius: 10px;
+                padding: 8px 12px;
             }
         """)
         layout = QVBoxLayout(card)
         layout.setSpacing(2)
-        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setContentsMargins(12, 10, 12, 10)
 
         lbl_title = QLabel(title)
-        lbl_title.setStyleSheet("color: #7F8C8D; font-size: 11px; font-weight: bold; border: none;")
+        lbl_title.setStyleSheet("color: #A6ADC8; font-size: 11px; font-weight: bold; border: none;")
         
         lbl_value = QLabel(initial_val)
-        lbl_value.setStyleSheet("color: #3498DB; font-size: 18px; font-weight: bold; border: none;")
+        lbl_value.setStyleSheet(f"color: {val_color}; font-size: 20px; font-weight: bold; border: none;")
 
         layout.addWidget(lbl_title)
         layout.addWidget(lbl_value)
         return card, lbl_value
 
     def init_ui(self):
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #1E1E2E;
+                color: #CDD6F4;
+                font-family: 'Segoe UI', system-ui, sans-serif;
+            }
+        """)
+
         layout = QVBoxLayout(self)
-        layout.setSpacing(15)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(16)
 
         # 1. Título Principal
-        lbl_app_title = QLabel("ESTUDOFLOW")
+        lbl_app_title = QLabel("⚡ ESTUDOFLOW")
         lbl_app_title.setStyleSheet("""
             QLabel {
-                color: #FFFFFF;
-                font-size: 26px;
+                color: #CBA6F7;
+                font-size: 24px;
                 font-weight: bold;
                 letter-spacing: 2px;
-                margin-bottom: 0px;
             }
         """)
         layout.addWidget(lbl_app_title)
 
-        # 2. Linha de KPIs / Estatísticas Rápidas
+        # 2. Linha de KPIs
         kpi_layout = QHBoxLayout()
-        kpi_layout.setSpacing(10)
+        kpi_layout.setSpacing(12)
 
-        self.card_pages, self.lbl_kpi_pages = self._create_kpi_card("📄 PÁGINAS LIDAS")
-        self.card_blocks, self.lbl_kpi_blocks = self._create_kpi_card("🧩 BLOCOS CONCLUÍDOS")
-        self.card_overall, self.lbl_kpi_overall = self._create_kpi_card("🎯 PROGRESSO GERAL")
-        self.card_time, self.lbl_kpi_time = self._create_kpi_card("⏳ TEMPO INVESTIDO")
+        self.card_pages, self.lbl_kpi_pages = self._create_kpi_card("📄 PÁGINAS LIDAS", val_color="#89B4FA")
+        self.card_blocks, self.lbl_kpi_blocks = self._create_kpi_card("🧩 BLOCOS CONCLUÍDOS", val_color="#A6E3A1")
+        self.card_overall, self.lbl_kpi_overall = self._create_kpi_card("🎯 PROGRESSO GERAL", val_color="#F9E2AF")
+        self.card_time, self.lbl_kpi_time = self._create_kpi_card("⏳ TEMPO INVESTIDO", val_color="#FAB387")
 
         kpi_layout.addWidget(self.card_pages)
         kpi_layout.addWidget(self.card_blocks)
@@ -73,52 +83,47 @@ class DashboardView(QWidget):
         layout.addLayout(kpi_layout)
 
         # 3. Card Continuar (Recomendação Geral)
-        self.continue_card = QGroupBox("▶ CONTINUAR CICLO PRINCIPAL")
+        self.continue_card = QGroupBox("▶ CONTINUAR CICLO DE ESTUDOS")
         self.continue_card.setStyleSheet("""
             QGroupBox {
-                color: #3498DB;
+                color: #89B4FA;
                 font-weight: bold;
                 font-size: 14px;
-                border: 2px solid #3498DB;
-                border-radius: 8px;
+                border: 1px solid #313244;
+                border-radius: 10px;
                 margin-top: 5px;
-                padding: 15px;
-                background-color: #2C3E50;
+                padding: 16px;
+                background-color: #181825;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
                 subcontrol-position: top left;
-                padding: 0 5px;
-                color: #3498DB;
+                padding: 0 6px;
+                color: #89B4FA;
             }
         """)
         card_layout = QVBoxLayout(self.continue_card)
+        card_layout.setSpacing(10)
 
         self.lbl_info = QLabel("Nenhum estudo em andamento ou pendente.")
-        self.lbl_info.setStyleSheet("""
-            QLabel {
-                font-size: 15px;
-                color: #ECF0F1;
-                line-height: 1.4;
-            }
-        """)
+        self.lbl_info.setStyleSheet("font-size: 14px; color: #CDD6F4; line-height: 1.4;")
         self.lbl_info.setWordWrap(True)
         card_layout.addWidget(self.lbl_info)
 
-        self.btn_start = QPushButton("COMEÇAR RECOMENDADO")
+        # Botão Principal Recomendado
+        self.btn_start = QPushButton("▶ COMEÇAR RECOMENDADO")
         self.btn_start.setStyleSheet("""
             QPushButton {
-                background-color: #2ECC71;
-                color: #FFFFFF;
+                background-color: #A6E3A1;
+                color: #11111B;
                 font-weight: bold;
-                font-size: 14px;
+                font-size: 13px;
                 padding: 10px;
-                border-radius: 5px;
-                margin-top: 10px;
+                border-radius: 6px;
+                border: none;
             }
-            QPushButton:hover {
-                background-color: #27AE60;
-            }
+            QPushButton:hover { background-color: #94E2D5; }
+            QPushButton:disabled { background-color: #313244; color: #585B70; }
         """)
         self.btn_start.setCursor(Qt.PointingHandCursor)
         self.btn_start.clicked.connect(self.on_start_clicked)
@@ -129,21 +134,16 @@ class DashboardView(QWidget):
         self.btn_resume_last.setCursor(Qt.PointingHandCursor)
         self.btn_resume_last.setStyleSheet("""
             QPushButton {
-                background-color: #E67E22;
-                color: #FFFFFF;
+                background-color: #FAB387;
+                color: #11111B;
                 font-weight: bold;
                 font-size: 12px;
                 padding: 8px;
-                border-radius: 5px;
-                margin-top: 5px;
+                border-radius: 6px;
+                border: none;
             }
-            QPushButton:hover {
-                background-color: #D35400;
-            }
-            QPushButton:disabled {
-                background-color: #7F8C8D;
-                color: #BDC3C7;
-            }
+            QPushButton:hover { background-color: #F9E2AF; }
+            QPushButton:disabled { background-color: #313244; color: #585B70; }
         """)
         self.btn_resume_last.clicked.connect(self.start_in_progress_block)
         card_layout.addWidget(self.btn_resume_last)
@@ -152,37 +152,28 @@ class DashboardView(QWidget):
         quick_actions_layout = QHBoxLayout()
         quick_actions_layout.setSpacing(8)
 
+        btn_style = """
+            QPushButton {
+                background-color: #313244; color: #CDD6F4; 
+                padding: 8px; border-radius: 6px; font-weight: 500; font-size: 12px;
+                border: 1px solid #45475A;
+            }
+            QPushButton:hover { background-color: #45475A; color: #FFFFFF; }
+        """
+
         btn_short_block = QPushButton("⚡ Bloco Curto")
         btn_short_block.setCursor(Qt.PointingHandCursor)
-        btn_short_block.setStyleSheet("""
-            QPushButton {
-                background-color: #34495E; color: #ECF0F1; 
-                padding: 6px; border-radius: 4px; font-weight: bold; font-size: 11px;
-            }
-            QPushButton:hover { background-color: #4E657A; }
-        """)
+        btn_short_block.setStyleSheet(btn_style)
         btn_short_block.clicked.connect(self.start_short_block)
 
         btn_long_block = QPushButton("🐘 Bloco Longo")
         btn_long_block.setCursor(Qt.PointingHandCursor)
-        btn_long_block.setStyleSheet("""
-            QPushButton {
-                background-color: #34495E; color: #ECF0F1; 
-                padding: 6px; border-radius: 4px; font-weight: bold; font-size: 11px;
-            }
-            QPushButton:hover { background-color: #4E657A; }
-        """)
+        btn_long_block.setStyleSheet(btn_style)
         btn_long_block.clicked.connect(self.start_long_block)
 
         btn_random_block = QPushButton("🎲 Aleatório")
         btn_random_block.setCursor(Qt.PointingHandCursor)
-        btn_random_block.setStyleSheet("""
-            QPushButton {
-                background-color: #34495E; color: #ECF0F1; 
-                padding: 6px; border-radius: 4px; font-weight: bold; font-size: 11px;
-            }
-            QPushButton:hover { background-color: #4E657A; }
-        """)
+        btn_random_block.setStyleSheet(btn_style)
         btn_random_block.clicked.connect(self.start_random_block)
 
         quick_actions_layout.addWidget(btn_short_block)
@@ -193,23 +184,23 @@ class DashboardView(QWidget):
         layout.addWidget(self.continue_card)
 
         # 4. Seção de Progresso por Matéria
-        prog_group = QGroupBox("Seleção Direta por Matéria")
+        prog_group = QGroupBox("📚 Seleção Direta por Matéria")
         prog_group.setStyleSheet("""
             QGroupBox {
-                color: #BDC3C7;
+                color: #BAC2DE;
                 font-weight: bold;
                 font-size: 14px;
-                border: 1px solid #34495E;
-                border-radius: 8px;
+                border: 1px solid #313244;
+                border-radius: 10px;
                 margin-top: 5px;
-                padding: 15px;
-                background-color: #1E222A;
+                padding: 16px;
+                background-color: #181825;
             }
             QGroupBox::title {
                 subcontrol-origin: margin;
                 subcontrol-position: top left;
-                padding: 0 5px;
-                color: #BDC3C7;
+                padding: 0 6px;
+                color: #BAC2DE;
             }
         """)
         group_layout = QVBoxLayout(prog_group)
@@ -217,28 +208,20 @@ class DashboardView(QWidget):
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setStyleSheet("""
-            QScrollArea {
-                border: none;
-                background-color: transparent;
-            }
+            QScrollArea { border: none; background-color: transparent; }
             QScrollBar:vertical {
                 border: none;
-                background: #1E222A;
+                background: #181825;
                 width: 8px;
                 border-radius: 4px;
             }
             QScrollBar::handle:vertical {
-                background: #34495E;
+                background: #313244;
                 border-radius: 4px;
                 min-height: 20px;
             }
-            QScrollBar::handle:vertical:hover {
-                background: #4E657A;
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                border: none;
-                background: none;
-            }
+            QScrollBar::handle:vertical:hover { background: #45475A; }
+            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical { border: none; background: none; }
         """)
 
         self.scroll_content = QWidget()
@@ -272,7 +255,7 @@ class DashboardView(QWidget):
             db.close()
 
     def start_long_block(self):
-        """Busca o bloco pendente com maior número de páginas para sessões intensas."""
+        """Busca o bloco pendente com maior número de páginas."""
         db = SessionLocal()
         try:
             block = (
@@ -306,7 +289,7 @@ class DashboardView(QWidget):
             db.close()
 
     def start_random_block(self):
-        """Busca um bloco pendente aleatório para variar o estudo."""
+        """Busca um bloco pendente aleatório."""
         db = SessionLocal()
         try:
             block = (
@@ -350,22 +333,25 @@ class DashboardView(QWidget):
             pages_read = sum((b.page_end - b.page_start + 1) for b in done_b_list)
             overall_pct = int((done_b / total_b) * 100) if total_b > 0 else 0
 
-            # Soma o tempo acumulado em segundos nos blocos
+            # Cálculos do Tempo com suporte a segundos
             total_seconds = sum(b.time_spent_seconds or 0 for b in all_blocks)
             hours = total_seconds // 3600
             minutes = (total_seconds % 3600) // 60
+            seconds = total_seconds % 60
 
             if hours > 0:
                 time_str = f"{hours}h {minutes}m"
+            elif minutes > 0:
+                time_str = f"{minutes}m {seconds}s"
             else:
-                time_str = f"{minutes} min"
+                time_str = f"{seconds}s"
 
             self.lbl_kpi_pages.setText(f"{pages_read} pág(s)")
             self.lbl_kpi_blocks.setText(f"{done_b} / {total_b}")
             self.lbl_kpi_overall.setText(f"{overall_pct}%")
             self.lbl_kpi_time.setText(time_str)
 
-            # 3. Bloco Recomendado (Próximo do Ciclo)
+            # 3. Bloco Recomendado
             next_block = (
                 db.query(StudyBlock)
                 .join(Topic)
@@ -389,24 +375,24 @@ class DashboardView(QWidget):
                 p_end = next_block.page_end
 
                 self.lbl_info.setText(
-                    f"<b>Matéria:</b> {subj_name}<br>"
-                    f"<b>Tópico:</b> {topic_title} ({pdf_title})<br>"
+                    f"<b>Matéria:</b> <span style='color: #89B4FA;'>{subj_name}</span><br>"
+                    f"<b>Tópico:</b> {topic_title} <i>({pdf_title})</i><br>"
                     f"<b>Páginas:</b> {p_start} até {p_end}"
                 )
                 self.btn_start.setEnabled(True)
             else:
                 self.current_block_id = None
-                self.lbl_info.setText("Parabéns! Todos os blocos cadastrados foram concluídos.")
+                self.lbl_info.setText("✨ <b>Parabéns!</b> Todos os blocos cadastrados foram concluídos.")
                 self.btn_start.setEnabled(False)
 
-            # 4. Limpeza Adequada da Lista por Matéria
+            # 4. Limpeza da Lista por Matéria
             while self.prog_layout.count():
                 item = self.prog_layout.takeAt(0)
                 widget = item.widget()
                 if widget:
                     widget.deleteLater()
 
-            # 5. Renderização Otimizada por Matéria
+            # 5. Lista por Matéria Atualizada
             subjects = db.query(Subject).all()
             for s in subjects:
                 sub_total = db.query(StudyBlock).join(Topic).join(PdfDocument).filter(PdfDocument.subject_id == s.id).count()
@@ -420,26 +406,29 @@ class DashboardView(QWidget):
                 container = QWidget()
                 row = QHBoxLayout(container)
                 row.setContentsMargins(0, 0, 0, 0)
+                row.setSpacing(12)
                 
                 lbl = QLabel(s.name)
-                lbl.setMinimumWidth(150)
-                lbl.setStyleSheet("font-weight: bold; color: #ECF0F1;")
+                lbl.setMinimumWidth(160)
+                lbl.setStyleSheet("font-weight: bold; color: #CDD6F4; font-size: 13px;")
                 row.addWidget(lbl)
                 
                 bar = QProgressBar()
                 bar.setValue(pct)
                 bar.setStyleSheet("""
                     QProgressBar {
-                        border: 1px solid #34495E;
-                        border-radius: 5px;
+                        border: 1px solid #313244;
+                        border-radius: 6px;
                         text-align: center;
-                        color: #FFFFFF;
-                        background-color: #2C3E50;
-                        height: 20px;
+                        color: #CDD6F4;
+                        background-color: #11111B;
+                        height: 22px;
+                        font-weight: bold;
+                        font-size: 11px;
                     }
                     QProgressBar::chunk {
-                        background-color: #2ECC71;
-                        border-radius: 4px;
+                        background-color: #A6E3A1;
+                        border-radius: 5px;
                     }
                 """)
                 row.addWidget(bar)
@@ -448,19 +437,15 @@ class DashboardView(QWidget):
                 btn_study_subj.setCursor(Qt.PointingHandCursor)
                 btn_study_subj.setStyleSheet("""
                     QPushButton {
-                        background-color: #3498DB; 
-                        color: white; 
+                        background-color: #89B4FA; 
+                        color: #11111B; 
                         font-weight: bold; 
-                        padding: 5px 12px; 
-                        border-radius: 4px;
+                        padding: 6px 14px; 
+                        border-radius: 6px;
+                        border: none;
                     }
-                    QPushButton:hover {
-                        background-color: #2980B9;
-                    }
-                    QPushButton:disabled {
-                        background-color: #7F8C8D;
-                        color: #BDC3C7;
-                    }
+                    QPushButton:hover { background-color: #B4BEFE; }
+                    QPushButton:disabled { background-color: #313244; color: #585B70; }
                 """)
                 
                 if sub_total == 0:

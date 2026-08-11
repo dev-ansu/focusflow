@@ -9,6 +9,40 @@ class BlockStatus(enum.Enum):
     EM_ANDAMENTO = "EM_ANDAMENTO"
     CONCLUIDO = "CONCLUIDO"
     IGNORADO = "IGNORADO"
+class ErrorReason(str, enum.Enum):
+    ATENCAO = "Falta de Atenção / Pegadinha"
+    CONTEUDO = "Desconhecimento do Conteúdo"
+    INTERPRETACAO = "Interpretação do Enunciado"
+    TEMPO = "Falta de Tempo / Chute"
+    OUTRO = "Outro Motivo"
+
+class QuestionError(Base):
+    __tablename__ = 'question_errors'
+
+    # CORRIGIDO: removido 'primary_order=True'
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    
+    # Chaves Estrangeiras
+    subject_id = Column(Integer, ForeignKey('subjects.id'), nullable=False)
+    topic_id = Column(Integer, ForeignKey('topics.id'), nullable=True)
+    
+    # Detalhes da Questão
+    banca = Column(String(100), nullable=True)
+    ano = Column(Integer, nullable=True)
+    statement = Column(Text, nullable=False)
+    user_answer = Column(Text, nullable=True)
+    correct_answer = Column(Text, nullable=False)
+    
+    # Análise do Erro
+    # CORRIGIDO: Usando Enum(...) em vez de SQLEnum(...)
+    reason = Column(Enum(ErrorReason), default=ErrorReason.CONTEUDO, nullable=False)
+    explanation = Column(Text, nullable=True)
+    
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relacionamentos
+    subject = relationship("Subject", back_populates="question_errors")
+    topic = relationship("Topic")
 
 class Subject(Base):
     __tablename__ = "subjects"
@@ -19,6 +53,7 @@ class Subject(Base):
     
     pdfs = relationship("PdfDocument", back_populates="subject", cascade="all, delete-orphan")
     cycle_entries = relationship("StudyCycle", back_populates="subject", cascade="all, delete-orphan")
+    question_errors = relationship("QuestionError", back_populates="subject", cascade="all, delete-orphan")
 
 class PdfDocument(Base):
     __tablename__ = "pdf_documents"
@@ -36,6 +71,7 @@ class PdfDocument(Base):
     
     highlights = relationship("Highlight", back_populates="pdf", cascade="all, delete-orphan")
     notes = relationship("Note", back_populates="pdf", cascade="all, delete-orphan")
+
 
 class Topic(Base):
     __tablename__ = "topics"

@@ -13,7 +13,6 @@ from services.study_manager import StudyManager
 
 
 class PDFSelectableLabel(QLabel):
-    
     area_selected = Signal(QRect)
     point_clicked = Signal(QPoint)
 
@@ -45,8 +44,6 @@ class PDFSelectableLabel(QLabel):
             self.selection_end = event.position().toPoint()
             
             rect = QRect(self.selection_start, self.selection_end).normalized()
-            
-           
             if rect.width() <= 5 and rect.height() <= 5:
                 self.point_clicked.emit(self.selection_start)
             else:
@@ -83,7 +80,7 @@ class StudyReaderView(QWidget):
         self.total_pages = 0
         self.zoom_factor = 1.0
         self.auto_fit_width = True
-        self.dark_mode = False  # Estado do Modo Escuro no PDF
+        self.dark_mode = False
         
         self.selected_color = "#FFFF00"
         self.color_buttons = {}
@@ -97,58 +94,129 @@ class StudyReaderView(QWidget):
         self.timer.timeout.connect(self.update_timer)
         self.elapsed_seconds = 0
 
-        self.btn_toggle_left = QPushButton("📐 Menu Geral")
-        self.btn_toggle_left.setToolTip("Ocultar/Exibir Menu Principal")
-        self.btn_toggle_left.clicked.connect(lambda: self.toggle_left_sidebar_requested.emit())
-
-        self.btn_toggle_right = QPushButton("📝 Anotações")
-        self.btn_toggle_right.setToolTip("Ocultar/Exibir Painel de Anotações")
-        self.btn_toggle_right.clicked.connect(self.toggle_right_sidebar)
-        
         self.setup_shortcuts()
         self.init_ui()
         
     def setup_shortcuts(self):
-        # Navegação
         QShortcut(QKeySequence("Right"), self, self.next_page)
         QShortcut(QKeySequence("PageDown"), self, self.next_page)
         QShortcut(QKeySequence("Left"), self, self.prev_page)
         QShortcut(QKeySequence("PageUp"), self, self.prev_page)
         
-        # Zoom
         QShortcut(QKeySequence("Ctrl++"), self, self.zoom_in)
         QShortcut(QKeySequence("Ctrl+-"), self, self.zoom_out)
-
         QShortcut(QKeySequence("Ctrl+D"), self, lambda: self.btn_dark_mode.animateClick())
 
-    
-        QShortcut(QKeySequence("1"), self, lambda: self.set_highlight_color("#FFFF00")) # Amarelo 🟡
-        QShortcut(QKeySequence("2"), self, lambda: self.set_highlight_color("#2ECC71")) # Verde 🟢
-        QShortcut(QKeySequence("3"), self, lambda: self.set_highlight_color("#3498DB")) # Azul 🔵
-        QShortcut(QKeySequence("4"), self, lambda: self.set_highlight_color("#E91E63")) # Rosa 🩷
+        QShortcut(QKeySequence("1"), self, lambda: self.set_highlight_color("#FFFF00"))
+        QShortcut(QKeySequence("2"), self, lambda: self.set_highlight_color("#2ECC71"))
+        QShortcut(QKeySequence("3"), self, lambda: self.set_highlight_color("#3498DB"))
+        QShortcut(QKeySequence("4"), self, lambda: self.set_highlight_color("#E91E63"))
 
     def init_ui(self):
+        # Ajustamos aqui o fundo principal para um cinza suave e menos agressivo aos olhos
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #232534;
+                color: #CDD6F4;
+                font-family: 'Segoe UI', system-ui, sans-serif;
+            }
+            /* ScrollBar Customizada */
+            QScrollBar:vertical, QScrollBar:horizontal {
+                background-color: #1E1E2E;
+                width: 10px;
+                height: 10px;
+                border: none;
+            }
+            QScrollBar::handle:vertical, QScrollBar::handle:horizontal {
+                background-color: #45475A;
+                border-radius: 5px;
+            }
+            QScrollBar::handle:hover {
+                background-color: #585B70;
+            }
+            /* Botões Padrão da ToolBar */
+            QPushButton.tool-btn {
+                background-color: #1E1E2E;
+                color: #CDD6F4;
+                border: 1px solid #313244;
+                border-radius: 6px;
+                padding: 6px 12px;
+                font-size: 13px;
+                font-weight: 500;
+            }
+            QPushButton.tool-btn:hover {
+                background-color: #313244;
+                border-color: #45475A;
+            }
+            QPushButton.tool-btn:checked {
+                background-color: #45475A;
+                color: #89B4FA;
+                border-color: #89B4FA;
+            }
+        """)
+
         outer_layout = QVBoxLayout(self)
-        outer_layout.setContentsMargins(10, 10, 10, 10)
-        outer_layout.setSpacing(10)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
 
-        # Toolbar Superior
-        top_bar_layout = QHBoxLayout()
-        top_bar_layout.addWidget(self.btn_toggle_left)
-        top_bar_layout.addWidget(self.btn_toggle_right)
-        top_bar_layout.addStretch()
-        outer_layout.addLayout(top_bar_layout)
+        # 1. TOOLBAR SUPERIOR (Header)
+        header_widget = QWidget()
+        header_widget.setStyleSheet("""
+            QWidget {
+                background-color: #1E1E2E;
+                border-bottom: 1px solid #313244;
+            }
+        """)
+        header_layout = QHBoxLayout(header_widget)
+        header_layout.setContentsMargins(12, 8, 12, 8)
 
+        self.btn_toggle_left = QPushButton("☰ Menu")
+        self.btn_toggle_left.setProperty("class", "tool-btn")
+        self.btn_toggle_left.setToolTip("Ocultar/Exibir Menu Principal")
+        self.btn_toggle_left.clicked.connect(lambda: self.toggle_left_sidebar_requested.emit())
+
+        self.btn_back = QPushButton("⬅️ Voltar")
+        self.btn_back.setProperty("class", "tool-btn")
+        self.btn_back.clicked.connect(self.save_and_pause)
+
+        self.lbl_header_title = QLabel("Leitor de Estudos")
+        self.lbl_header_title.setStyleSheet("font-weight: bold; font-size: 15px; color: #89B4FA; border: none;")
+
+        self.btn_toggle_right = QPushButton("📝 Anotações")
+        self.btn_toggle_right.setProperty("class", "tool-btn")
+        self.btn_toggle_right.setToolTip("Ocultar/Exibir Painel de Anotações")
+        self.btn_toggle_right.clicked.connect(self.toggle_right_sidebar)
+
+        header_layout.addWidget(self.btn_toggle_left)
+        header_layout.addWidget(self.btn_back)
+        header_layout.addSpacing(15)
+        header_layout.addWidget(self.lbl_header_title)
+        header_layout.addStretch()
+        header_layout.addWidget(self.btn_toggle_right)
+
+        outer_layout.addWidget(header_widget)
+
+        # 2. ÁREA CENTRAL (PDF + Sidebar)
         main_layout = QHBoxLayout()
-        main_layout.setSpacing(15)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
-        # --- PAINEL ESQUERDO: PDF + Controles ---
-        pdf_container = QVBoxLayout()
-        
+        pdf_container_widget = QWidget()
+        pdf_container_layout = QVBoxLayout(pdf_container_widget)
+        pdf_container_layout.setContentsMargins(12, 12, 12, 12)
+        pdf_container_layout.setSpacing(8)
+
+        # ScrollArea com tom de cinza médio para reduzir contraste
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setAlignment(Qt.AlignCenter)
-        self.scroll_area.setStyleSheet("background-color: #34495e; border-radius: 6px;")
+        self.scroll_area.setStyleSheet("""
+            QScrollArea {
+                background-color: #2D2F42;
+                border: 1px solid #363952;
+                border-radius: 8px;
+            }
+        """)
 
         self.lbl_pdf_page = PDFSelectableLabel("Nenhum PDF carregado.")
         self.lbl_pdf_page.setAlignment(Qt.AlignCenter)
@@ -156,193 +224,220 @@ class StudyReaderView(QWidget):
         self.lbl_pdf_page.point_clicked.connect(self.handle_point_clicked)
         self.scroll_area.setWidget(self.lbl_pdf_page)
         
-        pdf_container.addWidget(self.scroll_area)
-        
+        pdf_container_layout.addWidget(self.scroll_area, stretch=1)
 
-        # --------------------------------------------------------
-        # REORGANIZAÇÃO: BARRA 1 (Navegação & Zoom)
-        # --------------------------------------------------------
-        nav_layout = QHBoxLayout()
-        
-        self.btn_prev_page = QPushButton("⬅️ Anterior")
+        # BARRA INFERIOR UNIFICADA
+        bottom_bar = QFrame()
+        bottom_bar.setStyleSheet("""
+            QFrame {
+                background-color: #1E1E2E;
+                border: 1px solid #313244;
+                border-radius: 8px;
+                padding: 4px;
+            }
+            QLabel { border: none; font-size: 12px; }
+        """)
+        bottom_layout = QHBoxLayout(bottom_bar)
+        bottom_layout.setContentsMargins(8, 4, 8, 4)
+        bottom_layout.setSpacing(6)
+
+        # Paginação
+        self.btn_prev_page = QPushButton("◀")
+        self.btn_prev_page.setProperty("class", "tool-btn")
         self.btn_prev_page.clicked.connect(self.prev_page)
-        nav_layout.addWidget(self.btn_prev_page)
 
-        self.lbl_page_info = QLabel("Página: 0 / 0")
+        self.lbl_page_info = QLabel("Pág: 0 / 0")
         self.lbl_page_info.setAlignment(Qt.AlignCenter)
-        nav_layout.addWidget(self.lbl_page_info)
 
-        self.btn_next_page = QPushButton("Próxima ➡️")
+        self.btn_next_page = QPushButton("▶")
+        self.btn_next_page.setProperty("class", "tool-btn")
         self.btn_next_page.clicked.connect(self.next_page)
-        nav_layout.addWidget(self.btn_next_page)
 
-        nav_layout.addSpacing(15)
+        bottom_layout.addWidget(self.btn_prev_page)
+        bottom_layout.addWidget(self.lbl_page_info)
+        bottom_layout.addWidget(self.btn_next_page)
 
-        self.btn_zoom_out = QPushButton("🔍-")
-        self.btn_zoom_out.setToolTip("Reduzir Zoom")
+        bottom_layout.addSpacing(12)
+
+        # Zoom
+        self.btn_zoom_out = QPushButton("🔍 -")
+        self.btn_zoom_out.setProperty("class", "tool-btn")
         self.btn_zoom_out.clicked.connect(self.zoom_out)
-        nav_layout.addWidget(self.btn_zoom_out)
 
-        self.btn_zoom_fit = QPushButton("📐 Largura")
-        self.btn_zoom_fit.setToolTip("Ajustar à Largura")
+        self.btn_zoom_fit = QPushButton("📐 Fit")
+        self.btn_zoom_fit.setProperty("class", "tool-btn")
         self.btn_zoom_fit.clicked.connect(self.reset_zoom_to_fit)
-        nav_layout.addWidget(self.btn_zoom_fit)
 
-        self.btn_zoom_in = QPushButton("🔍+")
-        self.btn_zoom_in.setToolTip("Aumentar Zoom")
+        self.btn_zoom_in = QPushButton("🔍 +")
+        self.btn_zoom_in.setProperty("class", "tool-btn")
         self.btn_zoom_in.clicked.connect(self.zoom_in)
-        nav_layout.addWidget(self.btn_zoom_in)
 
-        pdf_container.addLayout(nav_layout)
+        bottom_layout.addWidget(self.btn_zoom_out)
+        bottom_layout.addWidget(self.btn_zoom_fit)
+        bottom_layout.addWidget(self.btn_zoom_in)
 
-        # --------------------------------------------------------
-        # REORGANIZAÇÃO: BARRA 2 (Ferramentas de Grifo)
-        # --------------------------------------------------------
-        tools_layout = QHBoxLayout()
-        
-        lbl_colors = QLabel("<b>Grifo:</b>")
-        tools_layout.addWidget(lbl_colors)
+        bottom_layout.addSpacing(12)
 
+        # Modo Escuro
+        self.btn_dark_mode = QPushButton("🌙 Escuro")
+        self.btn_dark_mode.setProperty("class", "tool-btn")
+        self.btn_dark_mode.setCheckable(True)
+        self.btn_dark_mode.clicked.connect(self.toggle_dark_mode)
+        bottom_layout.addWidget(self.btn_dark_mode)
+
+        bottom_layout.addStretch()
+
+        # Seleção de Cores para Grifo
         colors_config = [
-            ("🟡 (1)", "#FFFF00", "1"),
-            ("🟢 (2)", "#2ECC71", "2"),
-            ("🔵 (3)", "#3498DB", "3"),
-            ("🩷 (4)", "#E91E63", "4"),
+            ("🟡", "#FFFF00", "1"),
+            ("🟢", "#2ECC71", "2"),
+            ("🔵", "#3498DB", "3"),
+            ("🩷", "#E91E63", "4"),
         ]
 
-        for label_text, hex_code, key in colors_config:
-            btn = QPushButton(label_text)
-            btn.setMinimumWidth(50)
-            btn.setToolTip(f"Cor: {hex_code} (Pressione {key})")
+        for icon_symbol, hex_code, key in colors_config:
+            btn = QPushButton(icon_symbol)
+            btn.setFixedSize(30, 30)
+            btn.setToolTip(f"Cor: {hex_code} (Atalho: {key})")
             btn.clicked.connect(lambda _, c=hex_code: self.set_highlight_color(c))
-            tools_layout.addWidget(btn)
+            bottom_layout.addWidget(btn)
             self.color_buttons[hex_code] = btn
-
-         # Botão para alternar Modo Escuro do PDF
-        self.btn_dark_mode = QPushButton("🌙 Modo Escuro")
-        self.btn_dark_mode.setCheckable(True)
-        self.btn_dark_mode.setToolTip("Alternar modo escuro no PDF")
-        self.btn_dark_mode.clicked.connect(self.toggle_dark_mode)
-        
-        # Você pode adicionar no 'tools_layout' (ao lado dos botões de grifo):
-        tools_layout.addWidget(self.btn_dark_mode)
 
         self.update_color_button_styles()
 
-        tools_layout.addStretch()
-
-        self.btn_undo_highlight = QPushButton("↩️ Desfazer Último Grifo")
+        # Desfazer Grifo
+        self.btn_undo_highlight = QPushButton("↩️")
+        self.btn_undo_highlight.setProperty("class", "tool-btn")
+        self.btn_undo_highlight.setToolTip("Desfazer Último Grifo")
         self.btn_undo_highlight.clicked.connect(self.undo_last_highlight)
-        tools_layout.addWidget(self.btn_undo_highlight)
+        bottom_layout.addWidget(self.btn_undo_highlight)
 
-        pdf_container.addLayout(tools_layout)
-        main_layout.addLayout(pdf_container, stretch=4)
+        pdf_container_layout.addWidget(bottom_bar)
+        main_layout.addWidget(pdf_container_widget, stretch=4)
 
-        # --- PAINEL DIREITO ---
+        # 3. PAINEL DIREITO
         self.sidebar = QFrame()
-        self.sidebar.setFrameShape(QFrame.StyledPanel)
-        self.sidebar.setFixedWidth(280)
+        self.sidebar.setFixedWidth(300)
+        self.sidebar.setStyleSheet("""
+            QFrame#RightSidebar {
+                background-color: #1E1E2E;
+                border-left: 1px solid #313244;
+            }
+            QLabel { border: none; }
+        """)
+        self.sidebar.setObjectName("RightSidebar")
         sidebar_layout = QVBoxLayout(self.sidebar)
+        sidebar_layout.setContentsMargins(14, 14, 14, 14)
+        sidebar_layout.setSpacing(12)
         
-        self.lbl_info = QLabel("<h3>Nenhum bloco selecionado</h3>")
+        # Info do Bloco
+        self.lbl_info = QLabel("<b>Nenhum bloco selecionado</b>")
         self.lbl_info.setWordWrap(True)
+        self.lbl_info.setStyleSheet("font-size: 13px; color: #BAC2DE;")
         sidebar_layout.addWidget(self.lbl_info)
 
+        # Progresso
         self.block_progress = QProgressBar()
         self.block_progress.setStyleSheet("""
             QProgressBar {
-                border: 1px solid #34495e;
-                border-radius: 4px;
+                border: 1px solid #313244;
+                border-radius: 6px;
                 text-align: center;
-                color: white;
-                background-color: #2c3e50;
-                height: 16px;
+                color: #CDD6F4;
+                background-color: #181825;
+                height: 18px;
                 font-size: 11px;
                 font-weight: bold;
             }
             QProgressBar::chunk {
-                background-color: #3498db;
-                border-radius: 3px;
+                background-color: #89B4FA;
+                border-radius: 5px;
             }
         """)
         sidebar_layout.addWidget(self.block_progress)
 
-        # Cronômetro
+        # Cronômetro Card
         timer_frame = QFrame()
-        timer_frame.setStyleSheet("background-color: #2c3e50; border-radius: 8px; padding: 10px;")
+        timer_frame.setStyleSheet("background-color: #181825; border: 1px solid #313244; border-radius: 8px; padding: 10px;")
         timer_layout = QVBoxLayout(timer_frame)
+        timer_layout.setSpacing(6)
         
-        lbl_timer_title = QLabel("Tempo de Estudo")
-        lbl_timer_title.setStyleSheet("color: #bdc3c7; font-size: 12px;")
+        lbl_timer_title = QLabel("TEMPO DEDICADO")
+        lbl_timer_title.setStyleSheet("color: #A6ADC8; font-size: 11px; font-weight: bold;")
         lbl_timer_title.setAlignment(Qt.AlignCenter)
         timer_layout.addWidget(lbl_timer_title)
 
         self.lbl_timer = QLabel("00:00:00")
-        self.lbl_timer.setStyleSheet("font-size: 28px; font-weight: bold; color: #2ecc71;")
+        self.lbl_timer.setStyleSheet("font-size: 26px; font-weight: bold; color: #A6E3A1; border: none;")
         self.lbl_timer.setAlignment(Qt.AlignCenter)
         timer_layout.addWidget(self.lbl_timer)
 
         btn_timer_layout = QHBoxLayout()
-        self.btn_start_timer = QPushButton("▶️ Iniciar")
+        
+        self.btn_start_timer = QPushButton("▶ Iniciar")
+        self.btn_start_timer.setStyleSheet("""
+            QPushButton { background-color: #2D4F3E; color: #A6E3A1; border: 1px solid #A6E3A1; border-radius: 5px; padding: 6px; font-weight: bold; }
+            QPushButton:hover { background-color: #3A6650; }
+        """)
         self.btn_start_timer.clicked.connect(self.start_timer)
         btn_timer_layout.addWidget(self.btn_start_timer)
 
-        self.btn_pause_timer = QPushButton("⏸️ Pausar")
+        self.btn_pause_timer = QPushButton("⏸ Pausar")
+        self.btn_pause_timer.setStyleSheet("""
+            QPushButton { background-color: #523D26; color: #F9E2AF; border: 1px solid #F9E2AF; border-radius: 5px; padding: 6px; font-weight: bold; }
+            QPushButton:hover { background-color: #6B5032; }
+        """)
         self.btn_pause_timer.clicked.connect(self.pause_timer)
         btn_timer_layout.addWidget(self.btn_pause_timer)
 
         timer_layout.addLayout(btn_timer_layout)
 
-        self.btn_reset_timer = QPushButton("⏹️ Parar e Descartar")
+        self.btn_reset_timer = QPushButton("⏹ Descartar Tempo")
         self.btn_reset_timer.setStyleSheet("""
-            QPushButton {
-                background-color: #e74c3c;
-                color: white;
-                font-weight: bold;
-                padding: 6px;
-                border-radius: 4px;
-                margin-top: 5px;
-            }
-            QPushButton:hover {
-                background-color: #c0392b;
-            }
+            QPushButton { background-color: transparent; color: #F38BA8; border: none; font-size: 11px; margin-top: 4px; }
+            QPushButton:hover { text-decoration: underline; }
         """)
         self.btn_reset_timer.clicked.connect(self.reset_timer)
         timer_layout.addWidget(self.btn_reset_timer)
 
         sidebar_layout.addWidget(timer_frame)
 
-        # Anotações
-        lbl_notes_title = QLabel("<b>Anotações do Bloco:</b>")
+        # Campo de Anotações
+        lbl_notes_title = QLabel("<b>📝 Anotações da Página</b>")
+        lbl_notes_title.setStyleSheet("font-size: 13px; color: #CDD6F4;")
         sidebar_layout.addWidget(lbl_notes_title)
 
         self.txt_notes = QTextEdit()
-        self.txt_notes.setPlaceholderText("Escreva aqui suas anotações para este bloco de estudos...")
+        self.txt_notes.setPlaceholderText("Escreva aqui suas anotações...")
         self.txt_notes.setStyleSheet("""
             QTextEdit {
-                background-color: #2c3e50;
-                color: #ecf0f1;
-                border: 1px solid #34495e;
+                background-color: #181825;
+                color: #CDD6F4;
+                border: 1px solid #313244;
                 border-radius: 6px;
-                padding: 6px;
+                padding: 8px;
+                font-size: 13px;
+            }
+            QTextEdit:focus {
+                border-color: #89B4FA;
             }
         """)
         self.txt_notes.textChanged.connect(self.save_notes)
         sidebar_layout.addWidget(self.txt_notes)
 
         # Ações do Bloco
-        self.btn_save_pause = QPushButton("💾 Pausar e Salvar")
+        self.btn_save_pause = QPushButton("💾 Pausar e Voltar")
         self.btn_save_pause.setStyleSheet("""
             QPushButton {
-                background-color: #f39c12; 
-                color: white; 
+                background-color: #89B4FA; 
+                color: #11111B; 
                 font-size: 13px; 
                 font-weight: bold; 
                 padding: 10px;
                 border-radius: 6px;
-                margin-top: 10px;
+                border: none;
             }
-            QPushButton:hover { background-color: #d68910; }
+            QPushButton:hover { background-color: #B4BEFE; }
         """)
         self.btn_save_pause.clicked.connect(self.save_and_pause)
         sidebar_layout.addWidget(self.btn_save_pause)
@@ -350,15 +445,15 @@ class StudyReaderView(QWidget):
         self.btn_complete_block = QPushButton("✅ Concluir Bloco")
         self.btn_complete_block.setStyleSheet("""
             QPushButton {
-                background-color: #27ae60; 
-                color: white; 
+                background-color: #A6E3A1; 
+                color: #11111B; 
                 font-size: 13px; 
                 font-weight: bold; 
                 padding: 10px;
                 border-radius: 6px;
-                margin-top: 5px;
+                border: none;
             }
-            QPushButton:hover { background-color: #2ea043; }
+            QPushButton:hover { background-color: #94E2D5; }
         """)
         self.btn_complete_block.clicked.connect(self.complete_block)
         sidebar_layout.addWidget(self.btn_complete_block)
@@ -368,13 +463,8 @@ class StudyReaderView(QWidget):
 
     def toggle_dark_mode(self):
         self.dark_mode = self.btn_dark_mode.isChecked()
-        if self.dark_mode:
-            self.btn_dark_mode.setStyleSheet("background-color: #34495e; color: #f1c40f; font-weight: bold;")
-        else:
-            self.btn_dark_mode.setStyleSheet("")
         self.render_page()
 
-    # --- GERENCIAMENTO DE CORES ---
     def set_highlight_color(self, hex_code: str):
         self.selected_color = hex_code
         self.lbl_pdf_page.set_selection_color(hex_code)
@@ -383,9 +473,9 @@ class StudyReaderView(QWidget):
     def update_color_button_styles(self):
         for hex_code, btn in self.color_buttons.items():
             if hex_code == self.selected_color:
-                btn.setStyleSheet("border: 2px solid white; background-color: #1a252f; border-radius: 4px;")
+                btn.setStyleSheet(f"border: 2px solid white; background-color: {hex_code}; border-radius: 15px;")
             else:
-                btn.setStyleSheet("border: none; background-color: transparent;")
+                btn.setStyleSheet(f"border: 1px solid #313244; background-color: {hex_code}; border-radius: 15px;")
 
     def hex_to_rgb_tuple(self, hex_str: str):
         if not hex_str:
@@ -399,7 +489,6 @@ class StudyReaderView(QWidget):
         if hasattr(self, 'sidebar'):
             self.sidebar.setVisible(not self.sidebar.isVisible())
 
-    # --- REMOÇÃO DE GRIFO AO CLICAR NELE ---
     def handle_point_clicked(self, point: QPoint):
         if not self.doc or not self.current_pdf_id or self.current_page < 0:
             return
@@ -420,12 +509,10 @@ class StudyReaderView(QWidget):
 
             for hl in highlights:
                 hit = False
-                # 1. Verifica retângulo exato se houver coordenadas
                 if all(getattr(hl, attr, None) is not None for attr in ['x', 'y', 'width', 'height']):
                     rect = fitz.Rect(hl.x, hl.y, hl.x + hl.width, hl.y + hl.height)
                     if rect.contains(fitz.Point(pdf_x, pdf_y)):
                         hit = True
-                # 2. Se for por texto, verifica nos trechos encontrados pelo PyMuPDF
                 elif hl.selected_text:
                     matches = page.search_for(hl.selected_text)
                     for rect in matches:
@@ -443,7 +530,6 @@ class StudyReaderView(QWidget):
         finally:
             db.close()
 
-    # --- SALVAMENTO E NOTAS ---
     def save_notes(self):
         db = SessionLocal()
         try:
@@ -527,8 +613,9 @@ class StudyReaderView(QWidget):
         self.current_page = 0
         self.total_pages = 0
         self.lbl_pdf_page.setText("Nenhum PDF carregado.")
-        self.lbl_page_info.setText("Página: 0 / 0")
-        self.lbl_info.setText("<h3>Nenhum bloco selecionado</h3>")
+        self.lbl_page_info.setText("Pág: 0 / 0")
+        self.lbl_info.setText("<b>Nenhum bloco selecionado</b>")
+        self.lbl_header_title.setText("Leitor de Estudos")
         
         self.txt_notes.blockSignals(True)
         self.txt_notes.clear()
@@ -563,10 +650,12 @@ class StudyReaderView(QWidget):
             self.page_end = getattr(block, 'page_end', 1)
             self.block_status = block.status
             
+            self.lbl_header_title.setText(f"{subj_name} — {topic_title}")
+
             self.lbl_info.setText(
-                f"<b>Matéria:</b> {subj_name}<br><br>"
-                f"<b>Tópico:</b> {topic_title}<br><br>"
-                f"<b>Meta:</b> Pág. {self.page_start} até {self.page_end}"
+                f"📖 <b>{subj_name}</b><br>"
+                f"📌 {topic_title}<br><br>"
+                f"<b>Meta:</b> Páginas {self.page_start} até {self.page_end}"
             )
 
             if pdf_doc and pdf_doc.file_path:
@@ -578,8 +667,6 @@ class StudyReaderView(QWidget):
                 self.current_page = max(0, saved_page - 1)
                 self.render_page()
                 self.load_current_page_notes()
-                
-                # Inicia o cronômetro aqui de forma limpa após o carregamento do bloco
                 self.start_timer()
         except Exception as e:
             QMessageBox.critical(self, "Erro", f"Não foi possível abrir o PDF: {str(e)}")
@@ -641,7 +728,6 @@ class StudyReaderView(QWidget):
 
         page = self.doc.load_page(self.current_page)
         
-        # Limpa anotações de exibição anteriores
         annot = page.first_annot
         while annot:
             next_annot = annot.next
@@ -649,7 +735,6 @@ class StudyReaderView(QWidget):
                 page.delete_annot(annot)
             annot = next_annot
 
-        # Desenha os grifos cadastrados na página
         if self.current_pdf_id:
             db = SessionLocal()
             try:
@@ -681,24 +766,17 @@ class StudyReaderView(QWidget):
         matrix = self.get_zoom_matrix(page)
         pix = page.get_pixmap(matrix=matrix)
 
-        # --------------------------------------------------------
-        # APLICAÇÃO DO MODO ESCURO (Inversão de Cores do Pixmap)
-        # --------------------------------------------------------
         if self.dark_mode:
-            # Inverte os bytes da imagem (RGB -> 255 - RGB)
             inverted_samples = bytes([255 - b for b in pix.samples])
             qimg = QImage(inverted_samples, pix.width, pix.height, pix.stride, QImage.Format_RGB888).copy()
         else:
             qimg = QImage(pix.samples, pix.width, pix.height, pix.stride, QImage.Format_RGB888).copy()
 
-        # Renderiza a imagem ajustada no QLabel de uma única vez
         pixmap = QPixmap.fromImage(qimg)
         self.lbl_pdf_page.setPixmap(pixmap)
         
-        # Atualiza informações da interface
-        self.lbl_page_info.setText(f"Página: {self.current_page + 1} / {self.total_pages}")
+        self.lbl_page_info.setText(f"Pág: {self.current_page + 1} / {self.total_pages}")
         self.load_current_page_notes()
-    
 
         curr_1based = self.current_page + 1
         total_block_pages = max(1, (self.page_end - self.page_start + 1))
@@ -900,7 +978,6 @@ class StudyReaderView(QWidget):
             QMessageBox.critical(self, "Erro", f"Erro ao avançar bloco: {str(e)}")
 
     def start_timer(self):
-        # Se o timer NÃO estiver rodando, inicia
         if not self.timer.isActive():
             self.timer.start(1000)
 

@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
     QPushButton, QLabel, QInputDialog, QMessageBox, QTreeWidget, 
     QTreeWidgetItem, QFileDialog, QHeaderView, QAbstractItemView,
-    QDialog, QTextEdit, QComboBox
+    QDialog, QTextEdit, QComboBox, QFrame
 )
 from PySide6.QtCore import Qt, Signal
 import pymupdf as fitz
@@ -25,17 +25,30 @@ class NotesPreviewDialog(QDialog):
         self.setWindowTitle(f"Preview das Anotações - {subject_name}")
         self.resize(750, 550)
         self.setStyleSheet("""
-            QDialog { background-color: #1E222A; color: #ECF0F1; }
-            QLabel { color: #ECF0F1; }
-            QComboBox { background-color: #2C3E50; color: white; border: 1px solid #34495E; border-radius: 5px; padding: 5px; }
-            QTextEdit { background-color: #282C34; color: #ABB2BF; border: 1px solid #34495E; border-radius: 8px; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; }
+            QDialog { background-color: #1E1E2E; color: #CDD6F4; }
+            QLabel { color: #CDD6F4; font-size: 13px; }
+            QComboBox { 
+                background-color: #181825; 
+                color: #CDD6F4; 
+                border: 1px solid #313244; 
+                border-radius: 6px; 
+                padding: 6px 10px; 
+            }
+            QTextEdit { 
+                background-color: #181825; 
+                color: #CDD6F4; 
+                border: 1px solid #313244; 
+                border-radius: 8px; 
+                font-family: 'Cascadia Code', 'Consolas', monospace; 
+                font-size: 13px; 
+            }
         """)
 
         layout = QVBoxLayout(self)
 
         top_layout = QHBoxLayout()
         lbl_info = QLabel("<b>Visualização Prévia das Anotações:</b>")
-        lbl_info.setStyleSheet("font-size: 15px;")
+        lbl_info.setStyleSheet("font-size: 14px; color: #89B4FA;")
         top_layout.addWidget(lbl_info)
         top_layout.addStretch()
 
@@ -54,14 +67,20 @@ class NotesPreviewDialog(QDialog):
 
         bottom_layout = QHBoxLayout()
         btn_cancel = QPushButton("Cancelar")
-        btn_cancel.setStyleSheet("QPushButton { background-color: #7F8C8D; color: white; padding: 8px 15px; border-radius: 5px; font-weight: bold; } QPushButton:hover { background-color: #95A5A6; }")
+        btn_cancel.setStyleSheet("""
+            QPushButton { background-color: #313244; color: #CDD6F4; padding: 8px 16px; border-radius: 6px; font-weight: bold; border: none; }
+            QPushButton:hover { background-color: #45475A; }
+        """)
         btn_cancel.clicked.connect(self.reject)
         bottom_layout.addWidget(btn_cancel)
 
         bottom_layout.addStretch()
 
         btn_save = QPushButton("💾 Salvar em Disco")
-        btn_save.setStyleSheet("QPushButton { background-color: #2ECC71; color: white; padding: 8px 15px; border-radius: 5px; font-weight: bold; } QPushButton:hover { background-color: #27AE60; }")
+        btn_save.setStyleSheet("""
+            QPushButton { background-color: #A6E3A1; color: #11111B; padding: 8px 16px; border-radius: 6px; font-weight: bold; border: none; }
+            QPushButton:hover { background-color: #94E2D5; }
+        """)
         btn_save.clicked.connect(self.save_file)
         bottom_layout.addWidget(btn_save)
 
@@ -119,46 +138,109 @@ class SubjectView(QWidget):
         self.init_ui()
 
     def init_ui(self):
+        # Estilo Global da View de Matérias
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #1E1E2E;
+                color: #CDD6F4;
+                font-family: 'Segoe UI', system-ui, sans-serif;
+            }
+            /* Lista de Matérias */
+            QListWidget {
+                background-color: #181825;
+                color: #CDD6F4;
+                border: 1px solid #313244;
+                border-radius: 8px;
+                font-size: 14px;
+            }
+            QListWidget::item {
+                padding: 10px 12px;
+                border-bottom: 1px solid #2A2B3D;
+                border-radius: 4px;
+            }
+            QListWidget::item:hover {
+                background-color: #313244;
+            }
+            QListWidget::item:selected {
+                background-color: #45475A;
+                color: #89B4FA;
+                font-weight: bold;
+            }
+            /* Árvore de Tópicos */
+            QTreeWidget {
+                background-color: #181825;
+                color: #CDD6F4;
+                border: 1px solid #313244;
+                border-radius: 8px;
+                font-size: 13px;
+            }
+            QTreeWidget::item {
+                padding: 6px;
+                border-radius: 4px;
+            }
+            QTreeWidget::item:hover {
+                background-color: #313244;
+            }
+            QTreeWidget::item:selected {
+                background-color: #45475A;
+                color: #FFFFFF;
+            }
+            QHeaderView::section {
+                background-color: #1E1E2E;
+                color: #A6ADC8;
+                font-weight: bold;
+                padding: 6px 10px;
+                border: none;
+                border-bottom: 1px solid #313244;
+            }
+        """)
+
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(20)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(16)
 
         # --- COLUNA ESQUERDA: LISTA DE MATÉRIAS ---
         left_layout = QVBoxLayout()
+        left_layout.setSpacing(10)
         
         lbl_subj_title = QLabel("📚 Matérias")
-        lbl_subj_title.setStyleSheet("color: #FFFFFF; font-size: 18px; font-weight: bold; margin-bottom: 5px;")
+        lbl_subj_title.setStyleSheet("color: #89B4FA; font-size: 18px; font-weight: bold;")
         left_layout.addWidget(lbl_subj_title)
         
         self.list_subjects = QListWidget()
-        self.list_subjects.setStyleSheet("""
-            QListWidget { background-color: #1E222A; color: #ECF0F1; border: 1px solid #34495E; border-radius: 8px; font-size: 14px; }
-            QListWidget::item { padding: 10px; border-bottom: 1px solid #2C3E50; }
-            QListWidget::item:hover { background-color: #2C3E50; }
-            QListWidget::item:selected { background-color: #34495E; color: #3498DB; font-weight: bold; }
-        """)
         self.list_subjects.itemClicked.connect(self.on_subject_selected)
         left_layout.addWidget(self.list_subjects)
 
-        btn_add_subject = QPushButton("➕ Nova Matéria")
-        btn_add_subject.setStyleSheet("QPushButton { background-color: #3498DB; color: white; font-weight: bold; padding: 8px; border-radius: 5px; } QPushButton:hover { background-color: #2980B9; }")
+        left_btn_layout = QHBoxLayout()
+        left_btn_layout.setSpacing(8)
+
+        btn_add_subject = QPushButton("➕ Nova")
+        btn_add_subject.setStyleSheet("""
+            QPushButton { background-color: #313244; color: #89B4FA; font-weight: bold; padding: 8px; border-radius: 6px; border: 1px solid #45475A; }
+            QPushButton:hover { background-color: #45475A; color: #B4BEFE; }
+        """)
         btn_add_subject.setCursor(Qt.PointingHandCursor)
         btn_add_subject.clicked.connect(self.add_subject)
-        left_layout.addWidget(btn_add_subject)
+        left_btn_layout.addWidget(btn_add_subject)
 
-        btn_delete_subject = QPushButton("❌ Apagar Matéria")
-        btn_delete_subject.setStyleSheet("QPushButton { background-color: #8E44AD; color: white; font-weight: bold; padding: 8px; border-radius: 5px; } QPushButton:hover { background-color: #732D91; }")
+        btn_delete_subject = QPushButton("❌ Excluir")
+        btn_delete_subject.setStyleSheet("""
+            QPushButton { background-color: #313244; color: #F38BA8; font-weight: bold; padding: 8px; border-radius: 6px; border: 1px solid #45475A; }
+            QPushButton:hover { background-color: #45475A; }
+        """)
         btn_delete_subject.setCursor(Qt.PointingHandCursor)
         btn_delete_subject.clicked.connect(self.delete_selected_subject)
-        left_layout.addWidget(btn_delete_subject)
+        left_btn_layout.addWidget(btn_delete_subject)
 
+        left_layout.addLayout(left_btn_layout)
         layout.addLayout(left_layout, stretch=1)
 
         # --- COLUNA DIREITA: TÓPICOS E PDFs DA MATÉRIA ---
         right_layout = QVBoxLayout()
+        right_layout.setSpacing(12)
         
-        self.lbl_title = QLabel("<h3>Selecione uma matéria</h3>")
-        self.lbl_title.setStyleSheet("color: #FFFFFF; font-size: 18px;")
+        self.lbl_title = QLabel("Selecione uma matéria")
+        self.lbl_title.setStyleSheet("color: #CDD6F4; font-size: 18px; font-weight: bold;")
         right_layout.addWidget(self.lbl_title)
 
         self.tree_topics = OrderableTreeWidget(self)
@@ -170,65 +252,109 @@ class SubjectView(QWidget):
         self.tree_topics.setAcceptDrops(True)
         self.tree_topics.setDropIndicatorShown(True)
         self.tree_topics.setDragDropMode(QAbstractItemView.InternalMove)
-
-        # 🖱️ Permite duplo clique no item para iniciar o estudo imediatamente
         self.tree_topics.itemDoubleClicked.connect(self.on_item_double_clicked)
 
-        self.tree_topics.setStyleSheet("""
-            QTreeWidget { background-color: #1E222A; color: #ECF0F1; border: 1px solid #34495E; border-radius: 8px; font-size: 13px; }
-            QTreeWidget::item { padding: 6px; }
-            QTreeWidget::item:hover { background-color: #2C3E50; }
-            QTreeWidget::item:selected { background-color: #34495E; color: #FFFFFF; }
-            QHeaderView::section { background-color: #2C3E50; color: #BDC3C7; font-weight: bold; padding: 6px; border: none; }
-        """)
         right_layout.addWidget(self.tree_topics)
 
-        action_layout = QHBoxLayout()
+        # --- BARRA INFERIOR DE AÇÕES UNIFICADA ---
+        action_frame = QFrame()
+        action_frame.setStyleSheet("""
+            QFrame {
+                background-color: #181825;
+                border: 1px solid #313244;
+                border-radius: 8px;
+                padding: 6px;
+            }
+            QPushButton {
+                background-color: #313244;
+                color: #CDD6F4;
+                font-weight: 500;
+                padding: 8px 12px;
+                border-radius: 6px;
+                border: 1px solid #45475A;
+                font-size: 12px;
+            }
+            QPushButton:hover {
+                background-color: #45475A;
+            }
+        """)
+        
+        action_layout = QHBoxLayout(action_frame)
+        action_layout.setContentsMargins(8, 6, 8, 6)
+        action_layout.setSpacing(8)
 
-        # ▶️ Botão Estudar Bloco
+        # 1. Ação Principal (Destaque)
         btn_start_study = QPushButton("▶️ Estudar Bloco")
-        btn_start_study.setStyleSheet("QPushButton { background-color: #27AE60; color: white; font-weight: bold; padding: 8px 12px; border-radius: 5px; } QPushButton:hover { background-color: #219653; }")
+        btn_start_study.setStyleSheet("""
+            QPushButton {
+                background-color: #A6E3A1;
+                color: #11111B;
+                font-weight: bold;
+                padding: 8px 16px;
+                border: none;
+                font-size: 13px;
+            }
+            QPushButton:hover { background-color: #94E2D5; }
+        """)
         btn_start_study.setCursor(Qt.PointingHandCursor)
         btn_start_study.clicked.connect(self.start_study_selected)
         action_layout.addWidget(btn_start_study)
 
-        btn_export_notes = QPushButton("📝 Ver / Exportar Anotações")
-        btn_export_notes.setStyleSheet("QPushButton { background-color: #9B59B6; color: white; font-weight: bold; padding: 8px 12px; border-radius: 5px; } QPushButton:hover { background-color: #8E44AD; }")
-        btn_export_notes.setCursor(Qt.PointingHandCursor)
-        btn_export_notes.clicked.connect(self.export_notes)
-        action_layout.addWidget(btn_export_notes)
+        action_layout.addSpacing(6)
 
-        btn_move_up = QPushButton("⬆️ Cima")
-        btn_move_up.setStyleSheet("QPushButton { background-color: #34495E; color: white; padding: 8px; border-radius: 5px; } QPushButton:hover { background-color: #4E6E8E; }")
+        # 2. Reordenação e Edição
+        btn_move_up = QPushButton("⬆️")
+        btn_move_up.setToolTip("Mover Tópico para Cima")
+        btn_move_up.setFixedWidth(36)
         btn_move_up.setCursor(Qt.PointingHandCursor)
         btn_move_up.clicked.connect(lambda: self.move_topic(-1))
         action_layout.addWidget(btn_move_up)
 
-        btn_move_down = QPushButton("⬇️ Baixo")
-        btn_move_down.setStyleSheet("QPushButton { background-color: #34495E; color: white; padding: 8px; border-radius: 5px; } QPushButton:hover { background-color: #4E6E8E; }")
+        btn_move_down = QPushButton("⬇️")
+        btn_move_down.setToolTip("Mover Tópico para Baixo")
+        btn_move_down.setFixedWidth(36)
         btn_move_down.setCursor(Qt.PointingHandCursor)
         btn_move_down.clicked.connect(lambda: self.move_topic(1))
         action_layout.addWidget(btn_move_down)
 
         btn_import_pdf = QPushButton("📄 Importar PDF")
-        btn_import_pdf.setStyleSheet("QPushButton { background-color: #2ECC71; color: white; font-weight: bold; padding: 8px 12px; border-radius: 5px; } QPushButton:hover { background-color: #27AE60; }")
         btn_import_pdf.setCursor(Qt.PointingHandCursor)
         btn_import_pdf.clicked.connect(self.import_pdf_and_generate_blocks)
         action_layout.addWidget(btn_import_pdf)
 
-        btn_delete_topic = QPushButton("🗑️ Apagar Tópico")
-        btn_delete_topic.setStyleSheet("QPushButton { background-color: #E74C3C; color: white; padding: 8px 12px; border-radius: 5px; } QPushButton:hover { background-color: #C0392B; }")
+        btn_delete_topic = QPushButton("🗑️ Apagar")
+        btn_delete_topic.setToolTip("Apagar Tópico Selecionado")
+        btn_delete_topic.setStyleSheet("""
+            QPushButton { background-color: #313244; color: #F38BA8; border: 1px solid #45475A; }
+            QPushButton:hover { background-color: #45475A; }
+        """)
         btn_delete_topic.setCursor(Qt.PointingHandCursor)
         btn_delete_topic.clicked.connect(self.delete_selected_topic)
         action_layout.addWidget(btn_delete_topic)
 
-        btn_reset_progress = QPushButton("🔄 Zerar Progresso")
-        btn_reset_progress.setStyleSheet("QPushButton { background-color: #E67E22; color: white; padding: 8px 12px; border-radius: 5px; } QPushButton:hover { background-color: #D35400; }")
+        action_layout.addStretch()
+
+        # 3. Ferramentas Adicionais
+        btn_export_notes = QPushButton("📝 Resumo / Anotações")
+        btn_export_notes.setStyleSheet("""
+            QPushButton { background-color: #313244; color: #CBA6F7; border: 1px solid #45475A; }
+            QPushButton:hover { background-color: #45475A; }
+        """)
+        btn_export_notes.setCursor(Qt.PointingHandCursor)
+        btn_export_notes.clicked.connect(self.export_notes)
+        action_layout.addWidget(btn_export_notes)
+
+        btn_reset_progress = QPushButton("🔄 Zerar")
+        btn_reset_progress.setToolTip("Zerar todo o progresso desta matéria")
+        btn_reset_progress.setStyleSheet("""
+            QPushButton { background-color: #313244; color: #FAB387; border: 1px solid #45475A; }
+            QPushButton:hover { background-color: #45475A; }
+        """)
         btn_reset_progress.setCursor(Qt.PointingHandCursor)
         btn_reset_progress.clicked.connect(self.reset_subject_progress)
         action_layout.addWidget(btn_reset_progress)
 
-        right_layout.addLayout(action_layout)
+        right_layout.addWidget(action_frame)
         layout.addLayout(right_layout, stretch=2.5)
 
         self.refresh()
@@ -248,7 +374,6 @@ class SubjectView(QWidget):
                 self.start_study_signal.emit(block_id)
         elif item_type == "TOPIC":
             topic_id = current_item.data(0, Qt.UserRole)
-            # Busca o primeiro bloco pendente/em andamento deste tópico
             db = SessionLocal()
             block = db.query(StudyBlock).filter(
                 StudyBlock.topic_id == topic_id,
@@ -274,7 +399,7 @@ class SubjectView(QWidget):
             db.close()
             return
 
-        self.lbl_title.setText(f"<b style='color: #3498DB;'>{subj.name}</b> <span style='color: #BDC3C7;'>- Tópicos e PDFs</span>")
+        self.lbl_title.setText(f"<span style='color: #89B4FA;'>{subj.name}</span> <span style='color: #A6ADC8; font-size: 14px;'>(Tópicos e Materiais)</span>")
 
         all_topics = (
             db.query(Topic)
@@ -307,7 +432,7 @@ class SubjectView(QWidget):
                             status_str = "🚫 Ignorado"
 
                         block_item = QTreeWidgetItem([f"   ↳ Bloco (Págs {b.page_start} - {b.page_end})", status_str])
-                        block_item.setData(0, Qt.UserRole, b.id)  # Guarda o ID do bloco
+                        block_item.setData(0, Qt.UserRole, b.id)
                         block_item.setData(0, Qt.UserRole + 1, "BLOCK")
                         item.addChild(block_item)
 
@@ -426,7 +551,7 @@ class SubjectView(QWidget):
     def refresh(self):
         self.list_subjects.clear()
         self.tree_topics.clear()
-        self.lbl_title.setText("<b style='color: #BDC3C7;'>Selecione uma matéria na lista à esquerda</b>")
+        self.lbl_title.setText("<span style='color: #A6ADC8;'>Selecione uma matéria na lista à esquerda</span>")
         self.selected_subject_id = None
         
         db = SessionLocal()
