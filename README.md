@@ -68,3 +68,41 @@ Ele elimina a necessidade de usar planilhas complexas, leitores de PDF genérico
    ```bash
    git clone [https://github.com/seu-usuario/estudoFlow.git](https://github.com/seu-usuario/estudoFlow.git)
    cd estudoFlow
+
+2. **Crie e ative um ambiente virtual (venv):**
+
+    ```Bash
+
+    # Linux/macOS
+    python3 -m venv venv
+    source venv/bin/activate
+
+    # Windows
+    python -m venv venv
+    venv\Scripts\activate
+
+3. **Instale as dependências:**
+
+    ```Bash
+    pip install -r requirements.txt
+
+4. **Execute a aplicação:**
+
+    ```Bash
+    python3 main.py
+
+📂 Estrutura do Projeto
+   
+    estudoFlow/
+    ├── database/         # Conexão SQLite e inicialização das tabelas
+    ├── models/           # Modelos SQLAlchemy (Subject, Note, QuestionError, etc.)
+    ├── services/         # Parsers de PDF, leitores de TOC e BackupManager
+    ├── ui/               # Views e Modais em PySide6
+    │   ├── dashboard.py
+    │   ├── error_notebook.py
+    │   ├── global_search_dialog.py
+    │   ├── reader.py
+    │   ├── settings.py
+    │   └── subjects.py
+    ├── main.py           # Ponto de entrada do aplicativo
+    └── requirements.txt  # Dependências do projeto
