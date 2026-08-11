@@ -1,111 +1,70 @@
 # 📚 EstudoFlow
 
-> **EstudoFlow** é um aplicativo desktop moderno para organização e acompanhamento de rotinas de estudo. Ele permite gerenciar matérias, organizar tópicos por ciclos, importar materiais em PDF com detecção de sumário (TOC), dividir leituras em blocos e realizar estudos em um leitor integrado com marca-texto, anotações e exportação de resumos.
+> Um gerenciador de estudos desktop moderno, focado em ciclos de estudo, leitura de PDFs, anotações e Caderno de Erros.
+
+![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)
+![PySide6](https://img.shields.io/badge/UI-PySide6%20%2F%20Qt6-green?logo=qt)
+![Database](https://img.shields.io/badge/Database-SQLite%20%2F%20SQLAlchemy-red)
+![License](https://img.shields.io/badge/License-MIT-yellow)
 
 ---
 
-## 🚀 Funcionalidades Principais
+## 📌 Sobre o Projeto
 
-* **📊 Dashboard de Desempenho:** Acompanhamento visual do progresso de estudos, tempo dedicado e blocos pendentes/concluídos.
-* **📚 Gestão de Matérias e Ciclos:** Organização hierárquica por matérias, tópicos e subtópicos com reordenação via *Drag & Drop*.
-* **📥 Importação Inteligente de PDFs:**
-  * Reconhecimento automático da estrutura de sumário (TOC) e metadados dos arquivos.
-  * Divisão flexível de PDFs em **blocos de leitura** por metas de páginas.
-* **📖 Leitor de PDF Integrado:**
-  * Leitura nativa com suporte a **marca-texto (grifos)** e inclusão de **anotações** vinculadas às páginas.
-  * Botão de início rápido (`▶️ Estudar Bloco`) ou acionamento via duplo clique nos tópicos/blocos.
-* **🔍 Busca Global (`Ctrl + F`):** Pesquisa rápida por termos em toda a estrutura de matérias e tópicos com navegação automática.
-* **📝 Exportação de Anotações:** Geração automática de cadernos de resumo (com grifos e anotações) exportáveis nos formatos **Markdown (`.md`)** e **Texto Puro (`.txt`)**.
+O **EstudoFlow** foi desenvolvido para centralizar toda a rotina de estudos de concursos, vestibulares e graduação em um único aplicativo desktop local, rápido e sem distrações. 
+
+Ele elimina a necessidade de usar planilhas complexas, leitores de PDF genéricos e apps de notas separados, integrando tudo num fluxo de trabalho otimizado.
+
+---
+
+## ✨ Principais Funcionalidades
+
+### 🔄 1. Ciclo de Estudos e Matérias
+- Organização de matérias com pesos, horas recomendadas e progresso visual.
+- Geração automática e dinâmica do ciclo de estudos.
+
+### 📖 2. Leitor de PDF Integrado & Mapeador de Sumário
+- Leitor de PDF com suporte a grifos e criação de anotações por página.
+- **Detecção Inteligente de Índice/Sumário (TOC):** Mapeia tópicos e capítulos do PDF automaticamente.
+
+### ❌ 3. Caderno de Erros (Question Error Notebook)
+- Registro detalhado de questões incorretas (Enunciado, Explicação, Banca e Matéria).
+- Filtros por matéria e navegação rápida direto para o item.
+
+### 🔍 4. Busca Global Estilo *Command Palette* (`Ctrl+F`)
+- Busca instantânea e unificada em todo o aplicativo:
+  - 📚 Matérias
+  - 🔖 Tópicos / Capítulos
+  - ❌ Enunciados e bancas do Caderno de Erros
+  - 📝 Anotações e 🖍️ Grifos do leitor
+
+### 📊 5. Dashboard & Estatísticas
+- Visão geral do tempo estudado, distribuição por matéria e métricas do ciclo.
+
+### ⚙️ 6. Gestão de Dados & Backup
+- Exportação e importação de **Backup completo (.zip)** com PDFs e dados salvos.
+- Painel de estatísticas de banco de dados e zona de reset seguro.
 
 ---
 
 ## 🛠️ Tecnologias Utilizadas
 
-* **Linguagem:** Python 3
-* **Interface Gráfica (GUI):** PySide6 (Qt for Python)
-* **Processamento de PDF:** PyMuPDF (`fitz`)
-* **Banco de Dados & ORM:** SQLite3 + SQLAlchemy
-* **Compilação / Empacotamento:** PyInstaller
+- **Linguagem:** Python 3.10+
+- **Interface Gráfica (GUI):** PySide6 (Qt for Python)
+- **Banco de Dados & ORM:** SQLite + SQLAlchemy
+- **Processamento de PDFs:** PyMuPDF (FitZ)
+- **Design/Tema:** Custom QSS (Catppuccin Macchiato Palette)
 
 ---
 
-## 📂 Estrutura do Projeto
+## 🚀 Como Executar o Projeto
 
-```text
-EstudoFlow/
-├── database/            # Conexão e configurações do banco SQLite
-├── models/              # Modelos de dados ORM (SQLAlchemy)
-├── services/            # Serviços de detecção de TOC, parsing de PDF e regras de negócio
-├── ui/                  # Componentes de interface e janelas (PySide6)
-│   ├── dashboard.py
-│   ├── global_search_dialog.py
-│   ├── main_window.py
-│   ├── pdf_import.py
-│   ├── reader.py
-│   ├── settings.py
-│   ├── study_session.py
-│   ├── subjects.py
-│   └── toc_review.py
-├── main.py              # Ponto de entrada da aplicação
-└── requirements.txt     # Dependências do projeto
+### Pré-requisitos
+- Python 3.10 ou superior instalado.
 
-💻 Como Rodar em Ambiente de Desenvolvimento
-Pré-requisitos
-Python 3.10+ instalado.
+### Passo a Passo
 
-Passo a Passo
-Clone o repositório:
-
-Bash
-git clone [https://github.com/seu-usuario/estudoflow.git](https://github.com/seu-usuario/estudoflow.git)
-cd estudoflow
-Crie e ative um ambiente virtual (venv):
-
-Linux/macOS:
-
-Bash
-python3 -m venv venv
-source venv/bin/activate
-Windows:
-
-DOS
-python -m venv venv
-venv\Scripts\activate
-Instale as dependências:
-
-Bash
-pip install -r requirements.txt
-Execute a aplicação:
-
-Bash
-python main.py
-📦 Como Gerar o Executável Standalone (PyInstaller)
-🐧 No Linux (Linux Mint / Ubuntu)
-Garanta que as dependências base do X11/XCB estejam instaladas:
-
-Bash
-sudo apt update
-sudo apt install -y libxcb-cursor0 libxcb-xinerama0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-shape0
-Gere o executável no terminal:
-
-Bash
-pyinstaller --noconfirm --onedir --windowed \
-  --name "EstudoFlow" \
-  --add-data "database:database" \
-  --collect-all PySide6 \
-  main.py
-O executável final estará disponível em: dist/EstudoFlow/EstudoFlow.
-
-🪟 No Windows
-Execute no Prompt de Comando (cmd):
-
-DOS
-pyinstaller --noconfirm --onedir --windowed ^
-  --name "EstudoFlow" ^
-  --add-data "database;database" ^
-  --collect-all PySide6 ^
-  main.py
-O arquivo executável estará disponível em: dist\EstudoFlow\EstudoFlow.exe.
-
-📄 Licença
-Este projeto é disponibilizado para fins de organização pessoal de estudos.
+1. **Clone o repositório:**
+   ```bash
+   git clone [https://github.com/seu-usuario/estudoFlow.git](https://github.com/seu-usuario/estudoFlow.git)
+   cd estudoFlow
