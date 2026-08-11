@@ -9,6 +9,7 @@ class BlockStatus(enum.Enum):
     EM_ANDAMENTO = "EM_ANDAMENTO"
     CONCLUIDO = "CONCLUIDO"
     IGNORADO = "IGNORADO"
+
 class ErrorReason(str, enum.Enum):
     ATENCAO = "Falta de Atenção / Pegadinha"
     CONTEUDO = "Desconhecimento do Conteúdo"
@@ -19,12 +20,11 @@ class ErrorReason(str, enum.Enum):
 class QuestionError(Base):
     __tablename__ = 'question_errors'
 
-    # CORRIGIDO: removido 'primary_order=True'
     id = Column(Integer, primary_key=True, autoincrement=True)
     
-    # Chaves Estrangeiras
-    subject_id = Column(Integer, ForeignKey('subjects.id'), nullable=False)
-    topic_id = Column(Integer, ForeignKey('topics.id'), nullable=True)
+    # Chaves Estrangeiras com CASCADE
+    subject_id = Column(Integer, ForeignKey('subjects.id', ondelete="CASCADE"), nullable=False)
+    topic_id = Column(Integer, ForeignKey('topics.id', ondelete="SET NULL"), nullable=True)
     
     # Detalhes da Questão
     banca = Column(String(100), nullable=True)
@@ -34,7 +34,6 @@ class QuestionError(Base):
     correct_answer = Column(Text, nullable=False)
     
     # Análise do Erro
-    # CORRIGIDO: Usando Enum(...) em vez de SQLEnum(...)
     reason = Column(Enum(ErrorReason), default=ErrorReason.CONTEUDO, nullable=False)
     explanation = Column(Text, nullable=True)
     
@@ -42,7 +41,7 @@ class QuestionError(Base):
 
     # Relacionamentos
     subject = relationship("Subject", back_populates="question_errors")
-    topic = relationship("Topic")
+    topic = relationship("Topic", back_populates="question_errors")
 
 class Subject(Base):
     __tablename__ = "subjects"
@@ -59,7 +58,7 @@ class PdfDocument(Base):
     __tablename__ = "pdf_documents"
     
     id = Column(Integer, primary_key=True, index=True)
-    subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=False)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False)
     title = Column(String(255), nullable=False)
     file_path = Column(Text, nullable=False)
     file_size_bytes = Column(Integer, nullable=False)
@@ -68,28 +67,30 @@ class PdfDocument(Base):
     
     subject = relationship("Subject", back_populates="pdfs")
     topics = relationship("Topic", back_populates="pdf", cascade="all, delete-orphan")
-    
     highlights = relationship("Highlight", back_populates="pdf", cascade="all, delete-orphan")
     notes = relationship("Note", back_populates="pdf", cascade="all, delete-orphan")
 
-
 class Topic(Base):
     __tablename__ = "topics"
+    
     id = Column(Integer, primary_key=True, index=True)
-    pdf_id = Column(Integer, ForeignKey("pdf_documents.id"), nullable=False)
-    parent_id = Column(Integer, ForeignKey("topics.id"), nullable=True)
+    pdf_id = Column(Integer, ForeignKey("pdf_documents.id", ondelete="CASCADE"), nullable=False)
+    parent_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"), nullable=True)
     title = Column(String(255), nullable=False)
     page_start = Column(Integer, nullable=False)
     page_end = Column(Integer, nullable=False)
     order = Column(Integer, default=0)
+    
     pdf = relationship("PdfDocument", back_populates="topics")
     parent = relationship("Topic", remote_side=[id], backref="subtopics")
     blocks = relationship("StudyBlock", back_populates="topic", cascade="all, delete-orphan")
+    question_errors = relationship("QuestionError", back_populates="topic")
 
 class StudyBlock(Base):
     __tablename__ = "study_blocks"
+    
     id = Column(Integer, primary_key=True, index=True)
-    topic_id = Column(Integer, ForeignKey("topics.id"), nullable=False)
+    topic_id = Column(Integer, ForeignKey("topics.id", ondelete="CASCADE"), nullable=False)
     page_start = Column(Integer, nullable=False)
     page_end = Column(Integer, nullable=False)
     current_page = Column(Integer, nullable=False)
@@ -97,35 +98,31 @@ class StudyBlock(Base):
     started_at = Column(DateTime, nullable=True)
     completed_at = Column(DateTime, nullable=True)
     time_spent_seconds = Column(Integer, default=0)
-    notes = relationship("Note", back_populates="block")
     
     topic = relationship("Topic", back_populates="blocks")
+    notes = relationship("Note", back_populates="block")
     sessions = relationship("StudySession", back_populates="block", cascade="all, delete-orphan")
 
 class Note(Base):
     __tablename__ = "notes"
 
     id = Column(Integer, primary_key=True, index=True)
-    pdf_id = Column(Integer, ForeignKey("pdf_documents.id"), nullable=False)
+    pdf_id = Column(Integer, ForeignKey("pdf_documents.id", ondelete="CASCADE"), nullable=False)
     page_number = Column(Integer, nullable=False)
-    
-    # Conteúdo da anotação
     content = Column(Text, nullable=False)
-    
-    # Opcional: vincula ao bloco se a anotação foi feita dentro de uma sessão
-    block_id = Column(Integer, ForeignKey("study_blocks.id"), nullable=True)
+    block_id = Column(Integer, ForeignKey("study_blocks.id", ondelete="SET NULL"), nullable=True)
     
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
-    # Relacionamentos
     pdf = relationship("PdfDocument", back_populates="notes")
     block = relationship("StudyBlock", back_populates="notes")
 
 class StudySession(Base):
     __tablename__ = "study_sessions"
+    
     id = Column(Integer, primary_key=True, index=True)
-    block_id = Column(Integer, ForeignKey("study_blocks.id"), nullable=False)
+    block_id = Column(Integer, ForeignKey("study_blocks.id", ondelete="CASCADE"), nullable=False)
     started_at = Column(DateTime, default=datetime.utcnow)
     ended_at = Column(DateTime, nullable=True)
     pages_read = Column(Integer, default=0)
@@ -134,24 +131,22 @@ class StudySession(Base):
 
 class StudyCycle(Base):
     __tablename__ = "study_cycles"
+    
     id = Column(Integer, primary_key=True, index=True)
-    subject_id = Column(Integer, ForeignKey("subjects.id"), nullable=False)
+    subject_id = Column(Integer, ForeignKey("subjects.id", ondelete="CASCADE"), nullable=False)
     order = Column(Integer, nullable=False)
 
     subject = relationship("Subject", back_populates="cycle_entries")
-# Adicione a classe Highlight no final do models/models.py
 
 class Highlight(Base):
     __tablename__ = "highlights"
-    id = Column(Integer, primary_key=True, index=True)
-    pdf_id = Column(Integer, ForeignKey("pdf_documents.id"), nullable=False)
-    page_number = Column(Integer, nullable=False)
     
-    # Texto grifado e cor em hex (#FFFF00 = amarelo)
+    id = Column(Integer, primary_key=True, index=True)
+    pdf_id = Column(Integer, ForeignKey("pdf_documents.id", ondelete="CASCADE"), nullable=False)
+    page_number = Column(Integer, nullable=False)
     selected_text = Column(Text, nullable=True)
     color = Column(String(20), default="#FFFF00")
     
-    # Coordenadas do retângulo grifado na página (opcional, para renderização precisa)
     x = Column(Integer, nullable=True)
     y = Column(Integer, nullable=True)
     width = Column(Integer, nullable=True)

@@ -582,43 +582,32 @@ class SubjectView(QWidget):
             return
 
         db = SessionLocal()
-        subj = db.query(Subject).filter(Subject.id == self.selected_subject_id).first()
-        if not subj:
-            db.close()
-            return
+        try:
+            subj = db.query(Subject).filter(Subject.id == self.selected_subject_id).first()
+            if not subj:
+                return
 
-        confirm = QMessageBox.question(
-            self, "ATENÇÃO - Excluir Matéria", 
-            f"Tem certeza que deseja apagar a matéria '{subj.name}'?\n\n"
-            f"Isso apagará DEFINITIVAMENTE todos os tópicos, PDFs vinculados e o histórico de estudos desta matéria.",
-            QMessageBox.Yes | QMessageBox.No
-        )
+            confirm = QMessageBox.question(
+                self, "ATENÇÃO - Excluir Matéria", 
+                f"Tem certeza que deseja apagar a matéria '{subj.name}'?\n\n"
+                f"Isso apagará DEFINITIVAMENTE todos os tópicos, PDFs, grifos e o histórico de estudos desta matéria.",
+                QMessageBox.Yes | QMessageBox.No
+            )
 
-        if confirm == QMessageBox.Yes:
-            try:
-                all_topics = (
-                    db.query(Topic)
-                    .join(PdfDocument)
-                    .filter(PdfDocument.subject_id == self.selected_subject_id)
-                    .all()
-                )
-                topic_ids = [t.id for t in all_topics]
-
-                if topic_ids:
-                    db.query(StudyBlock).filter(StudyBlock.topic_id.in_(topic_ids)).delete(synchronize_session=False)
-                    db.query(Topic).filter(Topic.id.in_(topic_ids)).delete(synchronize_session=False)
-
-                db.query(PdfDocument).filter(PdfDocument.subject_id == self.selected_subject_id).delete(synchronize_session=False)
-                db.query(Subject).filter(Subject.id == self.selected_subject_id).delete(synchronize_session=False)
-                
+            if confirm == QMessageBox.Yes:
+                # O SQLAlchemy vai ler os relacionamentos com cascade="all, delete-orphan"
+                # e apagar automaticamente PDFs, tópicos, blocos, highlights, notes, etc.
+                db.delete(subj)
                 db.commit()
+                
                 QMessageBox.information(self, "Sucesso", "Matéria e todos os seus dados foram excluídos com sucesso.")
                 self.refresh()
-            except Exception as e:
-                db.rollback()
-                QMessageBox.critical(self, "Erro", f"Falha ao excluir matéria: {str(e)}")
-            finally:
-                db.close()
+                
+        except Exception as e:
+            db.rollback()
+            QMessageBox.critical(self, "Erro", f"Falha ao excluir matéria: {str(e)}")
+        finally:
+            db.close()
 
     def on_subject_selected(self, item):
         subj_id = item.data(Qt.UserRole)
@@ -769,26 +758,28 @@ class SubjectView(QWidget):
         if confirm == QMessageBox.Yes:
             db = SessionLocal()
             try:
-                def recursive_delete(t_id):
-                    subtopics = db.query(Topic).filter(Topic.parent_id == t_id).all()
-                    for sub in subtopics:
-                        recursive_delete(sub.id)
-                    
-                    db.query(StudyBlock).filter(StudyBlock.topic_id == t_id).delete()
-                    
-                    topic = db.query(Topic).filter(Topic.id == t_id).first()
-                    pdf_id = topic.pdf_id if topic else None
-                    
-                    db.query(Topic).filter(Topic.id == t_id).delete()
-                    
-                    if pdf_id:
-                        other_topics = db.query(Topic).filter(Topic.pdf_id == pdf_id).count()
-                        if other_topics == 0:
-                            db.query(PdfDocument).filter(PdfDocument.id == pdf_id).delete()
+                # Busca o tópico utilizando o ORM para carregar o objeto na sessão
+                topic = db.query(Topic).filter(Topic.id == topic_id).first()
+                if not topic:
+                    db.close()
+                    return
 
-                recursive_delete(topic_id)
+                pdf = topic.pdf  # Guarda a referência ao PDF pai antes de apagar o tópico
+
+                # Ao deletar o tópico, o SQLAlchemy e o Banco cuidam de apagar:
+                # 1. Subtópicos (parent_id cascade)
+                # 2. Blocos de estudo (blocks cascade)
+                # 3. Question errors (topic_id cascade)
+                db.delete(topic)
+
+                # Regra de negócio: Se o PDF ficar sem nenhum tópico após essa exclusão, apaga o PDF também
+                if pdf and len(pdf.topics) == 1:  # Se era o último tópico restante vinculado a esse PDF
+                    db.delete(pdf)
+
                 db.commit()
+                QMessageBox.information(self, "Sucesso", "Tópico excluído com sucesso.")
                 self.load_topics(self.selected_subject_id)
+
             except Exception as e:
                 db.rollback()
                 QMessageBox.critical(self, "Erro", f"Falha ao apagar tópico: {str(e)}")
