@@ -1,14 +1,17 @@
 import os
-from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
-                             QLabel, QFileDialog, QComboBox, QMessageBox, QTableWidget, 
-                             QTableWidgetItem, QInputDialog, QHeaderView)
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, 
+    QLabel, QFileDialog, QComboBox, QMessageBox, QTableWidget, 
+    QTableWidgetItem, QInputDialog, QHeaderView, QFrame
+)
 from PySide6.QtCore import Qt, Signal
 from database.connection import SessionLocal
 from models.models import Subject
 from services.pdf_parser import PDFParser
 
+
 class PDFImportView(QWidget):
-    import_requested = Signal(list, int)  # <--- Emite (lista_de_file_paths, subject_id)
+    import_requested = Signal(list, int)  # Emite (lista_de_file_paths, subject_id)
 
     def __init__(self):
         super().__init__()
@@ -17,89 +20,165 @@ class PDFImportView(QWidget):
         self.init_ui()
 
     def init_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 15, 15, 15)
-        layout.setSpacing(15)
-
-        lbl_title = QLabel("📥 Importar PDFs em Lote")
-        lbl_title.setStyleSheet("color: #FFFFFF; font-size: 20px; font-weight: bold;")
-        layout.addWidget(lbl_title)
-
-        # Seleção e Criação Rápida de Matéria
-        subj_layout = QHBoxLayout()
-        
-        lbl_subj = QLabel("Matéria Alvo:")
-        lbl_subj.setStyleSheet("color: #BDC3C7; font-weight: bold; font-size: 14px;")
-        subj_layout.addWidget(lbl_subj)
-
-        self.cmb_subject = QComboBox()
-        self.cmb_subject.setStyleSheet("""
-            QComboBox {
-                background-color: #1E222A;
-                color: #ECF0F1;
-                border: 1px solid #34495E;
-                border-radius: 5px;
-                padding: 6px 10px;
+        self.setStyleSheet("""
+            QWidget {
+                background-color: #1E1E2E;
+                color: #CDD6F4;
+                font-family: 'Segoe UI', system-ui, sans-serif;
+            }
+            QLabel.title {
+                color: #89B4FA;
+                font-size: 20px;
+                font-weight: bold;
+            }
+            QLabel.subtitle {
+                color: #A6ADC8;
                 font-size: 13px;
             }
-            QComboBox::drop-down { border: none; }
+            QComboBox {
+                background-color: #181825;
+                color: #CDD6F4;
+                border: 1px solid #313244;
+                border-radius: 6px;
+                padding: 8px 12px;
+                font-size: 13px;
+            }
+            QComboBox:focus {
+                border-color: #89B4FA;
+            }
             QComboBox QAbstractItemView {
-                background-color: #1E222A;
-                color: #ECF0F1;
-                selection-background-color: #34495E;
+                background-color: #181825;
+                color: #CDD6F4;
+                selection-background-color: #313244;
             }
-        """)
-        subj_layout.addWidget(self.cmb_subject, stretch=3)
-
-        btn_new_subject = QPushButton("➕ Nova Matéria")
-        btn_new_subject.setStyleSheet("""
-            QPushButton {
-                background-color: #3498DB;
-                color: white;
+            QPushButton.primary-btn {
+                background-color: #89B4FA;
+                color: #11111B;
                 font-weight: bold;
-                padding: 6px 12px;
-                border-radius: 5px;
+                padding: 8px 16px;
+                border: none;
+                border-radius: 6px;
             }
-            QPushButton:hover { background-color: #2980B9; }
-        """)
-        btn_new_subject.setCursor(Qt.PointingHandCursor)
-        btn_new_subject.clicked.connect(self.create_new_subject)
-        subj_layout.addWidget(btn_new_subject, stretch=1)
-
-        layout.addLayout(subj_layout)
-
-        # Área de Drag & Drop
-        self.drop_area = QLabel("Arraste e solte múltiplos arquivos PDF aqui\nou clique no botão abaixo")
-        self.drop_area.setAlignment(Qt.AlignCenter)
-        self.drop_area.setStyleSheet("""
-            QLabel {
-                border: 2px dashed #34495E;
-                border-radius: 10px;
-                padding: 25px;
-                background-color: #1E222A;
-                color: #BDC3C7;
-                font-size: 14px;
+            QPushButton.primary-btn:hover {
+                background-color: #B4BEFE;
             }
-        """)
-        layout.addWidget(self.drop_area)
-
-        btn_browse = QPushButton("📁 Selecionar PDFs do Computador...")
-        btn_browse.setStyleSheet("""
-            QPushButton {
-                background-color: #2C3E50;
-                color: #ECF0F1;
+            QPushButton.secondary-btn {
+                background-color: #313244;
+                color: #CDD6F4;
+                font-weight: bold;
+                padding: 8px 16px;
+                border: 1px solid #45475A;
+                border-radius: 6px;
+            }
+            QPushButton.secondary-btn:hover {
+                background-color: #45475A;
+                color: #89B4FA;
+            }
+            QPushButton.success-btn {
+                background-color: #A6E3A1;
+                color: #11111B;
+                font-weight: bold;
+                font-size: 13px;
+                padding: 10px 20px;
+                border: none;
+                border-radius: 6px;
+            }
+            QPushButton.success-btn:hover {
+                background-color: #94E2D5;
+            }
+            QPushButton.danger-btn {
+                background-color: #F38BA8;
+                color: #11111B;
+                font-weight: bold;
+                padding: 8px 14px;
+                border: none;
+                border-radius: 6px;
+            }
+            QPushButton.danger-btn:hover {
+                background-color: #EBA0AC;
+            }
+            QTableWidget {
+                background-color: #181825;
+                color: #CDD6F4;
+                border: 1px solid #313244;
+                border-radius: 8px;
+                gridline-color: #252637;
+            }
+            QTableWidget::item {
+                padding: 8px;
+            }
+            QTableWidget::item:selected {
+                background-color: #313244;
+                color: #89B4FA;
+            }
+            QHeaderView::section {
+                background-color: #252637;
+                color: #A6ADC8;
                 font-weight: bold;
                 padding: 8px;
-                border: 1px solid #34495E;
-                border-radius: 5px;
+                border: none;
+                border-bottom: 1px solid #313244;
             }
-            QPushButton:hover { background-color: #34495E; }
         """)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(16, 16, 16, 16)
+        layout.setSpacing(14)
+
+        # 1. TÍTULO E SUBTÍTULO
+        header_layout = QVBoxLayout()
+        header_layout.setSpacing(2)
+        lbl_title = QLabel("📥 Importar PDFs em Lote")
+        lbl_title.setProperty("class", "title")
+        lbl_subtitle = QLabel("Adicione múltiplos PDFs e associe-os a uma matéria para processamento automático.")
+        lbl_subtitle.setProperty("class", "subtitle")
+        header_layout.addWidget(lbl_title)
+        header_layout.addWidget(lbl_subtitle)
+        layout.addLayout(header_layout)
+
+        # 2. SELEÇÃO E CRIAÇÃO RÁPIDA DE MATÉRIA
+        subj_card = QFrame()
+        subj_card.setStyleSheet("background-color: #252637; border-radius: 8px; padding: 6px;")
+        subj_card_layout = QHBoxLayout(subj_card)
+        subj_card_layout.setContentsMargins(10, 6, 10, 6)
+
+        lbl_subj = QLabel("Matéria Alvo:")
+        lbl_subj.setStyleSheet("color: #CDD6F4; font-weight: bold; font-size: 13px;")
+        subj_card_layout.addWidget(lbl_subj)
+
+        self.cmb_subject = QComboBox()
+        subj_card_layout.addWidget(self.cmb_subject, stretch=3)
+
+        btn_new_subject = QPushButton("➕ Nova Matéria")
+        btn_new_subject.setProperty("class", "secondary-btn")
+        btn_new_subject.setCursor(Qt.PointingHandCursor)
+        btn_new_subject.clicked.connect(self.create_new_subject)
+        subj_card_layout.addWidget(btn_new_subject, stretch=1)
+
+        layout.addWidget(subj_card)
+
+        # 3. ÁREA DE DRAG & DROP
+        self.drop_area = QLabel("📄 Arraste e solte seus arquivos PDF aqui\nou clique no botão para navegar")
+        self.drop_area.setAlignment(Qt.AlignCenter)
+        self.set_drop_area_style(active=False)
+        layout.addWidget(self.drop_area)
+
+        # Botão para Navegar pelos Arquivos
+        btn_browse = QPushButton("📁 Selecionar PDFs do Computador...")
+        btn_browse.setProperty("class", "secondary-btn")
         btn_browse.setCursor(Qt.PointingHandCursor)
         btn_browse.clicked.connect(self.browse_files)
         layout.addWidget(btn_browse)
 
-        # Tabela com resumos dos arquivos
+        # 4. CABEÇALHO DA TABELA + CONTADOR DE ARQUIVOS
+        table_header_layout = QHBoxLayout()
+        self.lbl_queue_count = QLabel("Fila de Importação (0 arquivos)")
+        self.lbl_queue_count.setStyleSheet("color: #A6ADC8; font-weight: bold; font-size: 13px;")
+        table_header_layout.addWidget(self.lbl_queue_count)
+        table_header_layout.addStretch()
+        layout.addLayout(table_header_layout)
+
+        # TABELA
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["Nome do Arquivo", "Páginas", "Tamanho"])
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
@@ -107,55 +186,19 @@ class PDFImportView(QWidget):
         self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.table.setSelectionBehavior(QTableWidget.SelectRows)
         self.table.setSelectionMode(QTableWidget.SingleSelection)
-        self.table.setStyleSheet("""
-            QTableWidget {
-                background-color: #1E222A;
-                color: #ECF0F1;
-                border: 1px solid #34495E;
-                border-radius: 8px;
-                gridline-color: #2C3E50;
-            }
-            QTableWidget::item { padding: 5px; }
-            QTableWidget::item:selected { background-color: #34495E; color: #FFFFFF; }
-            QHeaderView::section {
-                background-color: #2C3E50;
-                color: #BDC3C7;
-                font-weight: bold;
-                padding: 6px;
-                border: none;
-            }
-        """)
         layout.addWidget(self.table)
 
-        # Ações na Fila (Remover / Prosseguir)
+        # 5. AÇÕES DA FILA
         action_layout = QHBoxLayout()
 
         btn_remove = QPushButton("❌ Remover Selecionado")
-        btn_remove.setStyleSheet("""
-            QPushButton {
-                background-color: #E74C3C;
-                color: white;
-                padding: 8px 15px;
-                border-radius: 5px;
-                font-weight: bold;
-            }
-            QPushButton:hover { background-color: #C0392B; }
-        """)
+        btn_remove.setProperty("class", "danger-btn")
         btn_remove.setCursor(Qt.PointingHandCursor)
         btn_remove.clicked.connect(self.remove_selected_file)
         action_layout.addWidget(btn_remove)
 
         btn_clear = QPushButton("🗑️ Limpar Lista")
-        btn_clear.setStyleSheet("""
-            QPushButton {
-                background-color: #7F8C8D;
-                color: white;
-                padding: 8px 15px;
-                border-radius: 5px;
-                font-weight: bold;
-            }
-            QPushButton:hover { background-color: #95A5A6; }
-        """)
+        btn_clear.setProperty("class", "secondary-btn")
         btn_clear.setCursor(Qt.PointingHandCursor)
         btn_clear.clicked.connect(self.clear_all_files)
         action_layout.addWidget(btn_clear)
@@ -163,17 +206,7 @@ class PDFImportView(QWidget):
         action_layout.addStretch()
 
         self.btn_proceed = QPushButton("Avançar para Revisão dos PDFs ➔")
-        self.btn_proceed.setStyleSheet("""
-            QPushButton {
-                background-color: #2ECC71;
-                color: white;
-                font-weight: bold;
-                font-size: 13px;
-                padding: 10px 20px;
-                border-radius: 5px;
-            }
-            QPushButton:hover { background-color: #27AE60; }
-        """)
+        self.btn_proceed.setProperty("class", "success-btn")
         self.btn_proceed.setCursor(Qt.PointingHandCursor)
         self.btn_proceed.clicked.connect(self.proceed)
         action_layout.addWidget(self.btn_proceed)
@@ -182,52 +215,79 @@ class PDFImportView(QWidget):
 
         self.refresh_subjects()
 
+    def set_drop_area_style(self, active=False):
+        """Alterna o estilo visual da caixa de drag and drop quando o usuário arrasta algo por cima."""
+        if active:
+            self.drop_area.setStyleSheet("""
+                QLabel {
+                    border: 2px dashed #89B4FA;
+                    border-radius: 10px;
+                    padding: 24px;
+                    background-color: #252637;
+                    color: #89B4FA;
+                    font-size: 14px;
+                    font-weight: bold;
+                }
+            """)
+        else:
+            self.drop_area.setStyleSheet("""
+                QLabel {
+                    border: 2px dashed #45475A;
+                    border-radius: 10px;
+                    padding: 24px;
+                    background-color: #181825;
+                    color: #A6ADC8;
+                    font-size: 13px;
+                }
+            """)
+
     def refresh_subjects(self):
         current_id = self.cmb_subject.currentData()
         self.cmb_subject.clear()
-        db = SessionLocal()
-        subjects = db.query(Subject).all()
-        selected_index = 0
         
-        for idx, s in enumerate(subjects):
-            self.cmb_subject.addItem(s.name, s.id)
-            if current_id and s.id == current_id:
-                selected_index = idx
+        with SessionLocal() as db:
+            subjects = db.query(Subject).all()
+            selected_index = 0
+            
+            for idx, s in enumerate(subjects):
+                self.cmb_subject.addItem(s.name, s.id)
+                if current_id and s.id == current_id:
+                    selected_index = idx
 
-        if subjects:
-            self.cmb_subject.setCurrentIndex(selected_index)
-        db.close()
+            if subjects:
+                self.cmb_subject.setCurrentIndex(selected_index)
 
     def create_new_subject(self):
         text, ok = QInputDialog.getText(self, "Nova Matéria", "Nome da Matéria:")
         if ok and text.strip():
-            db = SessionLocal()
-            try:
-                new_subj = Subject(name=text.strip())
-                db.add(new_subj)
-                db.commit()
-                db.refresh(new_subj)
-                
-                self.refresh_subjects()
-                index = self.cmb_subject.findData(new_subj.id)
-                if index >= 0:
-                    self.cmb_subject.setCurrentIndex(index)
-            except Exception:
-                QMessageBox.warning(self, "Erro", "Matéria já existente ou inválida.")
-            finally:
-                db.close()
+            with SessionLocal() as db:
+                try:
+                    new_subj = Subject(name=text.strip())
+                    db.add(new_subj)
+                    db.commit()
+                    db.refresh(new_subj)
+                    
+                    self.refresh_subjects()
+                    index = self.cmb_subject.findData(new_subj.id)
+                    if index >= 0:
+                        self.cmb_subject.setCurrentIndex(index)
+                except Exception:
+                    QMessageBox.warning(self, "Erro", "Matéria já existente ou inválida.")
 
     def dragEnterEvent(self, event):
         if event.mimeData().hasUrls():
-            # Aceita apenas se houver pelo menos um .pdf arrastado
             urls = event.mimeData().urls()
             if any(u.toLocalFile().lower().endswith('.pdf') for u in urls):
+                self.set_drop_area_style(active=True)
                 event.acceptProposedAction()
 
+    def dragLeaveEvent(self, event):
+        self.set_drop_area_style(active=False)
+
     def dropEvent(self, event):
+        self.set_drop_area_style(active=False)
         files = [u.toLocalFile() for u in event.mimeData().urls() if u.toLocalFile().lower().endswith('.pdf')]
         
-        # Se tentou soltar arquivos que não são PDF
         total_dropped = len(event.mimeData().urls())
         if len(files) < total_dropped:
             QMessageBox.information(
@@ -239,7 +299,6 @@ class PDFImportView(QWidget):
             self.add_files(files)
 
     def browse_files(self):
-        # Filtro 'Arquivos PDF (*.pdf)' garante a restrição na janela do SO
         files, _ = QFileDialog.getOpenFileNames(
             self, "Selecionar PDFs", "", "Arquivos PDF (*.pdf)"
         )
@@ -248,22 +307,28 @@ class PDFImportView(QWidget):
 
     def add_files(self, files):
         for f in files:
-            # 1. Validação de extensão dupla
             if not f.lower().endswith('.pdf'):
                 continue
 
             if f not in self.selected_files:
                 try:
-                    # 2. Tenta extrair info do PDF (se der erro, o PDF pode estar corrompido)
                     info = PDFParser.get_info(f)
                     
                     self.selected_files.append(f)
                     row = self.table.rowCount()
                     self.table.insertRow(row)
-                    self.table.setItem(row, 0, QTableWidgetItem(info['title']))
-                    self.table.setItem(row, 1, QTableWidgetItem(str(info['pages'])))
+
+                    item_title = QTableWidgetItem(info['title'])
+                    item_pages = QTableWidgetItem(str(info['pages']))
+                    item_pages.setTextAlignment(Qt.AlignCenter)
+
                     size_mb = f"{info['size_bytes'] / (1024*1024):.2f} MB"
-                    self.table.setItem(row, 2, QTableWidgetItem(size_mb))
+                    item_size = QTableWidgetItem(size_mb)
+                    item_size.setTextAlignment(Qt.AlignCenter)
+
+                    self.table.setItem(row, 0, item_title)
+                    self.table.setItem(row, 1, item_pages)
+                    self.table.setItem(row, 2, item_size)
                 
                 except Exception as e:
                     file_name = os.path.basename(f)
@@ -271,6 +336,8 @@ class PDFImportView(QWidget):
                         self, "Erro ao carregar PDF", 
                         f"Não foi possível ler o arquivo '{file_name}'. Ele pode estar protegido ou corrompido.\n\nDetalhes: {str(e)}"
                     )
+
+        self.update_queue_label()
 
     def remove_selected_file(self):
         current_row = self.table.currentRow()
@@ -280,10 +347,16 @@ class PDFImportView(QWidget):
 
         del self.selected_files[current_row]
         self.table.removeRow(current_row)
+        self.update_queue_label()
 
     def clear_all_files(self):
         self.selected_files.clear()
         self.table.setRowCount(0)
+        self.update_queue_label()
+
+    def update_queue_label(self):
+        count = len(self.selected_files)
+        self.lbl_queue_count.setText(f"Fila de Importação ({count} arquivo{'s' if count != 1 else ''})")
 
     def proceed(self):
         if not self.selected_files:
