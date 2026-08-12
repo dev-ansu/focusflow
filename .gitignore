@@ -21,3 +21,7 @@ ENV/
 .vscode/
 .idea/
 .DS_Store
+
+export_code.py
+generate_bell_sound.py
+generate_icon.py
