@@ -11,7 +11,6 @@ from sqlalchemy.orm import joinedload, subqueryload
 
 from database.connection import SessionLocal
 from models.models import Subject, Topic, StudyBlock, BlockStatus, PdfDocument
-from services.pdf_parser import PDFParser
 
 
 class NotesPreviewDialog(QDialog):
@@ -118,18 +117,39 @@ class NotesPreviewDialog(QDialog):
 
 
 class OrderableTreeWidget(QTreeWidget):
-    """QTreeWidget customizado que detecta a soltura de itens para salvar a nova ordem no DB."""
+    """QTreeWidget customizado para controlar a ordenação e impedir aninhamento inválido."""
     def __init__(self, parent_view):
         super().__init__()
         self.parent_view = parent_view
 
     def dropEvent(self, event):
+        dragged_item = self.currentItem()
+        if not dragged_item:
+            event.ignore()
+            return
+
+        dragged_type = dragged_item.data(0, Qt.UserRole + 1)
+
+        # 1. Impede arrastar blocos de estudo para fora ou dentro de outros locais
+        if dragged_type == "BLOCK":
+            event.ignore()
+            return
+
+        # 2. Impede soltar tópicos dentro de outros tópicos criando hierarquias indesejadas
+        # Força o efeito do drop para ocorrer na raiz (sem ser como filho do item alvo)
+        target_item = self.itemAt(event.position().toPoint())
+        drop_position = self.dropIndicatorPosition()
+
+        if target_item:
+            # Se tentar soltar exatamente em cima de um nó (OnItem), converte o drop para "Abaixo do nó"
+            if drop_position == QAbstractItemView.OnItem:
+                event.setDropAction(Qt.MoveAction)
+
         super().dropEvent(event)
         self.parent_view.save_topics_order()
 
 
 class SubjectView(QWidget):
-    # 📡 Sinal enviado para abrir a sessão de estudo no leitor
     start_study_signal = Signal(int)
 
     def __init__(self):
@@ -138,14 +158,12 @@ class SubjectView(QWidget):
         self.init_ui()
 
     def init_ui(self):
-        # Estilo Global da View de Matérias
         self.setStyleSheet("""
             QWidget {
                 background-color: #1E1E2E;
                 color: #CDD6F4;
                 font-family: 'Segoe UI', system-ui, sans-serif;
             }
-            /* Lista de Matérias */
             QListWidget {
                 background-color: #181825;
                 color: #CDD6F4;
@@ -166,7 +184,6 @@ class SubjectView(QWidget):
                 color: #89B4FA;
                 font-weight: bold;
             }
-            /* Árvore de Tópicos */
             QTreeWidget {
                 background-color: #181825;
                 color: #CDD6F4;
@@ -198,18 +215,53 @@ class SubjectView(QWidget):
         layout = QHBoxLayout(self)
         layout.setContentsMargins(16, 16, 16, 16)
         layout.setSpacing(16)
-
+    
         # --- COLUNA ESQUERDA: LISTA DE MATÉRIAS ---
         left_layout = QVBoxLayout()
         left_layout.setSpacing(10)
         
-        lbl_subj_title = QLabel("📚 Matérias")
+        lbl_subj_title = QLabel("📚 Fila de Prioridade")
         lbl_subj_title.setStyleSheet("color: #89B4FA; font-size: 18px; font-weight: bold;")
+
+        lbl_subj_subtitle = QLabel("A ordem abaixo define a sequência do seu ciclo.")
+        lbl_subj_subtitle.setStyleSheet("color: #A6ADC8; font-size: 11px; margin-bottom: 4px;")
+
         left_layout.addWidget(lbl_subj_title)
+        left_layout.addWidget(lbl_subj_subtitle)
         
         self.list_subjects = QListWidget()
+        self.list_subjects.setDragDropMode(QAbstractItemView.InternalMove)
+        self.list_subjects.setDefaultDropAction(Qt.MoveAction)
+        self.list_subjects.model().rowsMoved.connect(self.save_subjects_order)
         self.list_subjects.itemClicked.connect(self.on_subject_selected)
         left_layout.addWidget(self.list_subjects)
+
+        subj_order_layout = QHBoxLayout()
+        subj_order_layout.setSpacing(4)
+
+        btn_subj_top = QPushButton("⏫ Topo")
+        btn_subj_top.setToolTip("Mover Matéria para o Início")
+        btn_subj_top.setCursor(Qt.PointingHandCursor)
+        btn_subj_top.clicked.connect(lambda: self.move_subject('top'))
+        subj_order_layout.addWidget(btn_subj_top)
+
+        btn_subj_up = QPushButton("⬆️ Subir")
+        btn_subj_up.setCursor(Qt.PointingHandCursor)
+        btn_subj_up.clicked.connect(lambda: self.move_subject(-1))
+        subj_order_layout.addWidget(btn_subj_up)
+
+        btn_subj_down = QPushButton("⬇️ Descer")
+        btn_subj_down.setCursor(Qt.PointingHandCursor)
+        btn_subj_down.clicked.connect(lambda: self.move_subject(1))
+        subj_order_layout.addWidget(btn_subj_down)
+
+        btn_subj_bottom = QPushButton("⏬ Fim")
+        btn_subj_bottom.setToolTip("Mover Matéria para o Final")
+        btn_subj_bottom.setCursor(Qt.PointingHandCursor)
+        btn_subj_bottom.clicked.connect(lambda: self.move_subject('bottom'))
+        subj_order_layout.addWidget(btn_subj_bottom)
+
+        left_layout.addLayout(subj_order_layout)
 
         left_btn_layout = QHBoxLayout()
         left_btn_layout.setSpacing(8)
@@ -235,7 +287,7 @@ class SubjectView(QWidget):
         left_layout.addLayout(left_btn_layout)
         layout.addLayout(left_layout, stretch=1)
 
-        # --- COLUNA DIREITA: TÓPICOS E PDFs DA MATÉRIA ---
+        # --- COLUNA DIREITA: TÓPICOS E PDFs ---
         right_layout = QVBoxLayout()
         right_layout.setSpacing(12)
         
@@ -252,6 +304,7 @@ class SubjectView(QWidget):
         self.tree_topics.setAcceptDrops(True)
         self.tree_topics.setDropIndicatorShown(True)
         self.tree_topics.setDragDropMode(QAbstractItemView.InternalMove)
+        self.tree_topics.setDefaultDropAction(Qt.MoveAction)
         self.tree_topics.itemDoubleClicked.connect(self.on_item_double_clicked)
 
         right_layout.addWidget(self.tree_topics)
@@ -283,7 +336,6 @@ class SubjectView(QWidget):
         action_layout.setContentsMargins(8, 6, 8, 6)
         action_layout.setSpacing(8)
 
-        # 1. Ação Principal (Destaque)
         btn_start_study = QPushButton("▶️ Estudar Bloco")
         btn_start_study.setStyleSheet("""
             QPushButton {
@@ -302,20 +354,33 @@ class SubjectView(QWidget):
 
         action_layout.addSpacing(6)
 
-        # 2. Reordenação e Edição
+        btn_topic_top = QPushButton("⏫")
+        btn_topic_top.setToolTip("Mover Tópico para o Topo")
+        btn_topic_top.setFixedWidth(32)
+        btn_topic_top.setCursor(Qt.PointingHandCursor)
+        btn_topic_top.clicked.connect(lambda: self.move_topic('top'))
+        action_layout.addWidget(btn_topic_top)
+
         btn_move_up = QPushButton("⬆️")
         btn_move_up.setToolTip("Mover Tópico para Cima")
-        btn_move_up.setFixedWidth(36)
+        btn_move_up.setFixedWidth(32)
         btn_move_up.setCursor(Qt.PointingHandCursor)
         btn_move_up.clicked.connect(lambda: self.move_topic(-1))
         action_layout.addWidget(btn_move_up)
 
         btn_move_down = QPushButton("⬇️")
         btn_move_down.setToolTip("Mover Tópico para Baixo")
-        btn_move_down.setFixedWidth(36)
+        btn_move_down.setFixedWidth(32)
         btn_move_down.setCursor(Qt.PointingHandCursor)
         btn_move_down.clicked.connect(lambda: self.move_topic(1))
         action_layout.addWidget(btn_move_down)
+
+        btn_topic_bottom = QPushButton("⏬")
+        btn_topic_bottom.setToolTip("Mover Tópico para o Final")
+        btn_topic_bottom.setFixedWidth(32)
+        btn_topic_bottom.setCursor(Qt.PointingHandCursor)
+        btn_topic_bottom.clicked.connect(lambda: self.move_topic('bottom'))
+        action_layout.addWidget(btn_topic_bottom)
 
         btn_import_pdf = QPushButton("📄 Importar PDF")
         btn_import_pdf.setCursor(Qt.PointingHandCursor)
@@ -334,7 +399,6 @@ class SubjectView(QWidget):
 
         action_layout.addStretch()
 
-        # 3. Ferramentas Adicionais
         btn_export_notes = QPushButton("📝 Resumo / Anotações")
         btn_export_notes.setStyleSheet("""
             QPushButton { background-color: #313244; color: #CBA6F7; border: 1px solid #45475A; }
@@ -359,8 +423,84 @@ class SubjectView(QWidget):
 
         self.refresh()
 
+    def move_subject(self, action):
+        row = self.list_subjects.currentRow()
+        count = self.list_subjects.count()
+
+        if row < 0 or count <= 1:
+            return
+
+        if action == -1:
+            new_row = max(0, row - 1)
+        elif action == 1:
+            new_row = min(count - 1, row + 1)
+        elif action == 'top':
+            new_row = 0
+        elif action == 'bottom':
+            new_row = count - 1
+        else:
+            return
+
+        if new_row == row:
+            return
+
+        item = self.list_subjects.takeItem(row)
+        self.list_subjects.insertItem(new_row, item)
+        self.list_subjects.setCurrentRow(new_row)
+        self.save_subjects_order()
+
+    def save_subjects_order(self):
+        db = SessionLocal()
+        try:
+            for i in range(self.list_subjects.count()):
+                item = self.list_subjects.item(i)
+                subj_id = item.data(Qt.UserRole)
+                if subj_id:
+                    subj = db.query(Subject).filter(Subject.id == subj_id).first()
+                    if subj:
+                        subj.order = i
+            db.commit()
+        except Exception:
+            db.rollback()
+        finally:
+            db.close()
+            
+        self.refresh()
+
+    def refresh(self):
+        self.list_subjects.clear()
+        self.tree_topics.clear()
+        self.lbl_title.setText("<span style='color: #A6ADC8;'>Selecione uma matéria na lista à esquerda</span>")
+        self.selected_subject_id = None
+        
+        db = SessionLocal()
+        subjects = db.query(Subject).order_by(Subject.order.asc(), Subject.id.asc()).all()
+        
+        for idx, s in enumerate(subjects, start=1):
+            item = QListWidgetItem(f"{idx}º  |  {s.name}")
+            item.setData(Qt.UserRole, s.id)
+            self.list_subjects.addItem(item)
+            
+        db.close()
+        
+    def add_subject(self):
+        text, ok = QInputDialog.getText(self, "Nova Matéria", "Nome da Matéria:")
+        if ok and text.strip():
+            db = SessionLocal()
+            try:
+                last_subj = db.query(Subject).order_by(Subject.order.desc()).first()
+                max_order = (last_subj.order + 1) if (last_subj and last_subj.order is not None) else 0
+
+                new_subj = Subject(name=text.strip(), order=max_order)
+                db.add(new_subj)
+                db.commit()
+                self.refresh()
+            except Exception:
+                QMessageBox.warning(self, "Erro", "A matéria já existe ou ocorreu um erro.")
+            finally:
+                db.close()
+
     def start_study_selected(self):
-        """Inicia a sessão de estudo para o bloco selecionado ou o primeiro bloco do tópico."""
         current_item = self.tree_topics.currentItem()
         if not current_item:
             QMessageBox.warning(self, "Aviso", "Selecione um tópico ou bloco para iniciar o estudo.")
@@ -387,11 +527,9 @@ class SubjectView(QWidget):
                 QMessageBox.information(self, "Aviso", "Não há blocos de estudo disponíveis para este tópico.")
 
     def on_item_double_clicked(self, item, column):
-        """Ação ao dar dois cliques em um item da árvore."""
         self.start_study_selected()
 
     def load_topics(self, subject_id):
-        """Carrega todos os tópicos e subtópicos em uma única consulta otimizada."""
         self.tree_topics.clear()
         db = SessionLocal()
         subj = db.query(Subject).filter(Subject.id == subject_id).first()
@@ -410,40 +548,29 @@ class SubjectView(QWidget):
             .all()
         )
 
-        topics_by_parent = {}
         for t in all_topics:
-            topics_by_parent.setdefault(t.parent_id, []).append(t)
+            item = QTreeWidgetItem([f"🔖 {t.title}", ""])
+            item.setData(0, Qt.UserRole, t.id)
+            item.setData(0, Qt.UserRole + 1, "TOPIC")
+            
+            if t.blocks:
+                sorted_blocks = sorted(t.blocks, key=lambda b: b.page_start)
+                for b in sorted_blocks:
+                    status_str = "⏳ Pendente"
+                    if b.status == BlockStatus.EM_ANDAMENTO:
+                        status_str = "▶️ Em Andamento"
+                    elif b.status == BlockStatus.CONCLUIDO:
+                        status_str = "✅ Concluído"
+                    elif b.status == BlockStatus.IGNORADO:
+                        status_str = "🚫 Ignorado"
 
-        def add_nodes(parent_item, parent_id):
-            for t in topics_by_parent.get(parent_id, []):
-                item = QTreeWidgetItem([f"🔖 {t.title}", ""])
-                item.setData(0, Qt.UserRole, t.id)
-                item.setData(0, Qt.UserRole + 1, "TOPIC")
-                
-                if t.blocks:
-                    sorted_blocks = sorted(t.blocks, key=lambda b: b.page_start)
-                    for b in sorted_blocks:
-                        status_str = "⏳ Pendente"
-                        if b.status == BlockStatus.EM_ANDAMENTO:
-                            status_str = "▶️ Em Andamento"
-                        elif b.status == BlockStatus.CONCLUIDO:
-                            status_str = "✅ Concluído"
-                        elif b.status == BlockStatus.IGNORADO:
-                            status_str = "🚫 Ignorado"
+                    block_item = QTreeWidgetItem([f"   ↳ Bloco (Págs {b.page_start} - {b.page_end})", status_str])
+                    block_item.setData(0, Qt.UserRole, b.id)
+                    block_item.setData(0, Qt.UserRole + 1, "BLOCK")
+                    item.addChild(block_item)
 
-                        block_item = QTreeWidgetItem([f"   ↳ Bloco (Págs {b.page_start} - {b.page_end})", status_str])
-                        block_item.setData(0, Qt.UserRole, b.id)
-                        block_item.setData(0, Qt.UserRole + 1, "BLOCK")
-                        item.addChild(block_item)
+            self.tree_topics.addTopLevelItem(item)
 
-                if parent_item:
-                    parent_item.addChild(item)
-                else:
-                    self.tree_topics.addTopLevelItem(item)
-
-                add_nodes(item, t.id)
-
-        add_nodes(None, None)
         self.tree_topics.expandAll()
         db.close()
 
@@ -548,34 +675,6 @@ class SubjectView(QWidget):
         finally:
             db.close()
 
-    def refresh(self):
-        self.list_subjects.clear()
-        self.tree_topics.clear()
-        self.lbl_title.setText("<span style='color: #A6ADC8;'>Selecione uma matéria na lista à esquerda</span>")
-        self.selected_subject_id = None
-        
-        db = SessionLocal()
-        subjects = db.query(Subject).all()
-        for s in subjects:
-            item = QListWidgetItem(f"{s.name}")
-            item.setData(Qt.UserRole, s.id)
-            self.list_subjects.addItem(item)
-        db.close()
-
-    def add_subject(self):
-        text, ok = QInputDialog.getText(self, "Nova Matéria", "Nome da Matéria:")
-        if ok and text.strip():
-            db = SessionLocal()
-            try:
-                new_subj = Subject(name=text.strip())
-                db.add(new_subj)
-                db.commit()
-                self.refresh()
-            except Exception:
-                QMessageBox.warning(self, "Erro", "A matéria já existe ou ocorreu um erro.")
-            finally:
-                db.close()
-
     def delete_selected_subject(self):
         if not self.selected_subject_id:
             QMessageBox.warning(self, "Aviso", "Selecione uma matéria na lista para apagar.")
@@ -595,11 +694,8 @@ class SubjectView(QWidget):
             )
 
             if confirm == QMessageBox.Yes:
-                # O SQLAlchemy vai ler os relacionamentos com cascade="all, delete-orphan"
-                # e apagar automaticamente PDFs, tópicos, blocos, highlights, notes, etc.
                 db.delete(subj)
                 db.commit()
-                
                 QMessageBox.information(self, "Sucesso", "Matéria e todos os seus dados foram excluídos com sucesso.")
                 self.refresh()
                 
@@ -614,50 +710,49 @@ class SubjectView(QWidget):
         self.selected_subject_id = subj_id
         self.load_topics(subj_id)
 
-    def move_topic(self, direction):
+    def move_topic(self, action):
         current_item = self.tree_topics.currentItem()
         if not current_item or current_item.data(0, Qt.UserRole + 1) != "TOPIC":
             return
 
-        parent = current_item.parent()
-        if parent:
-            index = parent.indexOfChild(current_item)
-            new_index = index + direction
-            if 0 <= new_index < parent.childCount():
-                taken = parent.takeChild(index)
-                parent.insertChild(new_index, taken)
-                self.tree_topics.setCurrentItem(taken)
-                self.save_topics_order()
+        count = self.tree_topics.topLevelItemCount()
+        current_index = self.tree_topics.indexOfTopLevelItem(current_item)
+
+        if action == -1:
+            new_index = max(0, current_index - 1)
+        elif action == 1:
+            new_index = min(count - 1, current_index + 1)
+        elif action == 'top':
+            new_index = 0
+        elif action == 'bottom':
+            new_index = count - 1
         else:
-            index = self.tree_topics.indexOfTopLevelItem(current_item)
-            new_index = index + direction
-            if 0 <= new_index < self.tree_topics.topLevelItemCount():
-                taken = self.tree_topics.takeTopLevelItem(index)
-                self.tree_topics.insertTopLevelItem(new_index, taken)
-                self.tree_topics.setCurrentItem(taken)
-                self.save_topics_order()
+            return
+
+        if new_index == current_index:
+            return
+
+        taken = self.tree_topics.takeTopLevelItem(current_index)
+        self.tree_topics.insertTopLevelItem(new_index, taken)
+        self.tree_topics.setCurrentItem(taken)
+
+        self.save_topics_order()
 
     def save_topics_order(self):
-        """Salva a nova sequência de exibição dos tópicos no banco de dados."""
         db = SessionLocal()
         try:
-            def sync_item_order(parent_item=None):
-                count = parent_item.childCount() if parent_item else self.tree_topics.topLevelItemCount()
-                for i in range(count):
-                    item = parent_item.child(i) if parent_item else self.tree_topics.topLevelItem(i)
-                    topic_id = item.data(0, Qt.UserRole)
-                    item_type = item.data(0, Qt.UserRole + 1)
-                    
-                    if topic_id and item_type == "TOPIC":
-                        t = db.query(Topic).filter(Topic.id == topic_id).first()
-                        if t:
-                            t.order = i
-                            parent_topic_id = parent_item.data(0, Qt.UserRole) if parent_item else None
-                            t.parent_id = parent_topic_id
-                        
-                        sync_item_order(item)
+            count = self.tree_topics.topLevelItemCount()
+            for i in range(count):
+                item = self.tree_topics.topLevelItem(i)
+                topic_id = item.data(0, Qt.UserRole)
+                item_type = item.data(0, Qt.UserRole + 1)
+                
+                if topic_id and item_type == "TOPIC":
+                    t = db.query(Topic).filter(Topic.id == topic_id).first()
+                    if t:
+                        t.order = i
+                        t.parent_id = None  # Garante que a raiz do DB permaneça limpa sem sub-tópicos
 
-            sync_item_order(None)
             db.commit()
         except Exception:
             db.rollback()
@@ -758,22 +853,16 @@ class SubjectView(QWidget):
         if confirm == QMessageBox.Yes:
             db = SessionLocal()
             try:
-                # Busca o tópico utilizando o ORM para carregar o objeto na sessão
                 topic = db.query(Topic).filter(Topic.id == topic_id).first()
                 if not topic:
                     db.close()
                     return
 
-                pdf = topic.pdf  # Guarda a referência ao PDF pai antes de apagar o tópico
+                pdf = topic.pdf
 
-                # Ao deletar o tópico, o SQLAlchemy e o Banco cuidam de apagar:
-                # 1. Subtópicos (parent_id cascade)
-                # 2. Blocos de estudo (blocks cascade)
-                # 3. Question errors (topic_id cascade)
                 db.delete(topic)
 
-                # Regra de negócio: Se o PDF ficar sem nenhum tópico após essa exclusão, apaga o PDF também
-                if pdf and len(pdf.topics) == 1:  # Se era o último tópico restante vinculado a esse PDF
+                if pdf and len(pdf.topics) == 1:
                     db.delete(pdf)
 
                 db.commit()

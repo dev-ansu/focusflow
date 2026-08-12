@@ -47,6 +47,7 @@ class Subject(Base):
     __tablename__ = "subjects"
     
     id = Column(Integer, primary_key=True, index=True)
+    order = Column(Integer, default=0, nullable=False)
     name = Column(String(100), unique=True, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
     

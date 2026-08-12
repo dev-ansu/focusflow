@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import pymupdf as fitz
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
@@ -70,6 +70,7 @@ class PDFSelectableLabel(QLabel):
 class StudyReaderView(QWidget):
     back_requested = Signal()
     toggle_left_sidebar_requested = Signal()
+    block_completed = Signal()
 
     def __init__(self, block_id=None):
         super().__init__()
@@ -113,14 +114,12 @@ class StudyReaderView(QWidget):
         QShortcut(QKeySequence("4"), self, lambda: self.set_highlight_color("#E91E63"))
 
     def init_ui(self):
-        # Ajustamos aqui o fundo principal para um cinza suave e menos agressivo aos olhos
         self.setStyleSheet("""
             QWidget {
                 background-color: #232534;
                 color: #CDD6F4;
                 font-family: 'Segoe UI', system-ui, sans-serif;
             }
-            /* ScrollBar Customizada */
             QScrollBar:vertical, QScrollBar:horizontal {
                 background-color: #1E1E2E;
                 width: 10px;
@@ -134,7 +133,6 @@ class StudyReaderView(QWidget):
             QScrollBar::handle:hover {
                 background-color: #585B70;
             }
-            /* Botões Padrão da ToolBar */
             QPushButton.tool-btn {
                 background-color: #1E1E2E;
                 color: #CDD6F4;
@@ -159,7 +157,7 @@ class StudyReaderView(QWidget):
         outer_layout.setContentsMargins(0, 0, 0, 0)
         outer_layout.setSpacing(0)
 
-        # 1. TOOLBAR SUPERIOR (Header)
+        # 1. TOOLBAR SUPERIOR
         header_widget = QWidget()
         header_widget.setStyleSheet("""
             QWidget {
@@ -182,6 +180,20 @@ class StudyReaderView(QWidget):
         self.lbl_header_title = QLabel("Leitor de Estudos")
         self.lbl_header_title.setStyleSheet("font-weight: bold; font-size: 15px; color: #89B4FA; border: none;")
 
+        # Timer no topo (visível apenas quando o painel lateral estiver oculto)
+        self.lbl_header_timer = QLabel("⏱️ 00:00:00")
+        self.lbl_header_timer.setStyleSheet("""
+            font-size: 14px; 
+            font-weight: bold; 
+            color: #A6E3A1; 
+            background-color: #181825; 
+            border: 1px solid #313244; 
+            border-radius: 6px; 
+            padding: 4px 10px;
+        """)
+        self.lbl_header_timer.setToolTip("Tempo Dedicado (Barra de Anotações Oculta)")
+        self.lbl_header_timer.setVisible(False)
+
         self.btn_toggle_right = QPushButton("📝 Anotações")
         self.btn_toggle_right.setProperty("class", "tool-btn")
         self.btn_toggle_right.setToolTip("Ocultar/Exibir Painel de Anotações")
@@ -192,11 +204,13 @@ class StudyReaderView(QWidget):
         header_layout.addSpacing(15)
         header_layout.addWidget(self.lbl_header_title)
         header_layout.addStretch()
+        header_layout.addWidget(self.lbl_header_timer)
+        header_layout.addSpacing(10)
         header_layout.addWidget(self.btn_toggle_right)
 
         outer_layout.addWidget(header_widget)
 
-        # 2. ÁREA CENTRAL (PDF + Sidebar)
+        # 2. ÁREA CENTRAL
         main_layout = QHBoxLayout()
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
@@ -206,7 +220,6 @@ class StudyReaderView(QWidget):
         pdf_container_layout.setContentsMargins(12, 12, 12, 12)
         pdf_container_layout.setSpacing(8)
 
-        # ScrollArea com tom de cinza médio para reduzir contraste
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setAlignment(Qt.AlignCenter)
@@ -487,7 +500,12 @@ class StudyReaderView(QWidget):
 
     def toggle_right_sidebar(self):
         if hasattr(self, 'sidebar'):
-            self.sidebar.setVisible(not self.sidebar.isVisible())
+            is_visible = not self.sidebar.isVisible()
+            self.sidebar.setVisible(is_visible)
+            
+            # Mostra o timer no topo se o painel lateral estiver ocultado
+            if hasattr(self, 'lbl_header_timer'):
+                self.lbl_header_timer.setVisible(not is_visible)
 
     def handle_point_clicked(self, point: QPoint):
         if not self.doc or not self.current_pdf_id or self.current_page < 0:
@@ -632,12 +650,10 @@ class StudyReaderView(QWidget):
             if not block:
                 return
 
-            note = db.query(Note).filter(Note.block_id == block_id).first()
-            text_content = note.content if (note and note.content) else ""
-
-            self.txt_notes.blockSignals(True)
-            self.txt_notes.setPlainText(text_content)
-            self.txt_notes.blockSignals(False)
+            if block.status == BlockStatus.PENDENTE:
+                block.status = BlockStatus.EM_ANDAMENTO
+                if not block.started_at:
+                    block.started_at = datetime.now(timezone.utc)
 
             topic = db.query(Topic).filter(Topic.id == block.topic_id).first()
             pdf_doc = db.query(PdfDocument).filter(PdfDocument.id == topic.pdf_id).first() if topic else None
@@ -665,14 +681,19 @@ class StudyReaderView(QWidget):
                 
                 saved_page = block.current_page if (block.current_page and block.current_page > 0) else self.page_start
                 self.current_page = max(0, saved_page - 1)
+                
+                block.current_page = self.current_page + 1
+                db.commit()
+
                 self.render_page()
                 self.load_current_page_notes()
                 self.start_timer()
         except Exception as e:
+            db.rollback()
             QMessageBox.critical(self, "Erro", f"Não foi possível abrir o PDF: {str(e)}")
         finally:
             db.close()
-    
+
     def load_current_page_notes(self):
         db = SessionLocal()
         try:
@@ -775,6 +796,10 @@ class StudyReaderView(QWidget):
         pixmap = QPixmap.fromImage(qimg)
         self.lbl_pdf_page.setPixmap(pixmap)
         
+        # Reseta a rolagem vertical/horizontal para o topo ao renderizar
+        self.scroll_area.verticalScrollBar().setValue(0)
+        self.scroll_area.horizontalScrollBar().setValue(0)
+        
         self.lbl_page_info.setText(f"Pág: {self.current_page + 1} / {self.total_pages}")
         self.load_current_page_notes()
 
@@ -870,6 +895,8 @@ class StudyReaderView(QWidget):
             block = db.query(StudyBlock).filter(StudyBlock.id == self.block_id).first()
             if block:
                 block.current_page = self.current_page + 1
+                if block.status == BlockStatus.PENDENTE:
+                    block.status = BlockStatus.EM_ANDAMENTO
                 db.commit()
         except Exception:
             db.rollback()
@@ -901,8 +928,9 @@ class StudyReaderView(QWidget):
                 block = db.query(StudyBlock).filter(StudyBlock.id == self.block_id).first()
                 if block:
                     block.status = BlockStatus.CONCLUIDO
+                    self.block_completed.emit()
                     block.current_page = self.page_end
-                    block.completed_at = datetime.utcnow()
+                    block.completed_at = datetime.now(timezone.utc)
                     block.time_spent_seconds = (block.time_spent_seconds or 0) + self.elapsed_seconds
                     db.commit()
                     self.elapsed_seconds = 0
@@ -962,9 +990,15 @@ class StudyReaderView(QWidget):
 
             if next_block:
                 next_id = next_block.id
+                
+                next_block.status = BlockStatus.EM_ANDAMENTO
+                if not next_block.started_at:
+                    next_block.started_at = datetime.now(timezone.utc)
+                db.commit()
                 db.close()
+
+                # Recarrega utilizando a lógica normal do bloco
                 self.load_block(next_id)
-                self.start_timer()
             else:
                 db.close()
                 QMessageBox.information(
@@ -974,7 +1008,9 @@ class StudyReaderView(QWidget):
                 )
                 self.back_requested.emit()
         except Exception as e:
-            db.close()
+            if 'db' in locals():
+                db.rollback()
+                db.close()
             QMessageBox.critical(self, "Erro", f"Erro ao avançar bloco: {str(e)}")
 
     def start_timer(self):
@@ -989,7 +1025,7 @@ class StudyReaderView(QWidget):
                     block.status = BlockStatus.EM_ANDAMENTO
                     self.block_status = BlockStatus.EM_ANDAMENTO
                     if not block.started_at:
-                        block.started_at = datetime.utcnow()
+                        block.started_at = datetime.now(timezone.utc)
                     db.commit()
             except Exception as e:
                 db.rollback()
@@ -999,8 +1035,10 @@ class StudyReaderView(QWidget):
 
     def update_timer(self):
         self.elapsed_seconds += 1
-        time = QTime(0, 0, 0).addSecs(self.elapsed_seconds)
-        self.lbl_timer.setText(time.toString("hh:mm:ss"))
+        time_str = QTime(0, 0, 0).addSecs(self.elapsed_seconds).toString("hh:mm:ss")
+        self.lbl_timer.setText(time_str)
+        if hasattr(self, 'lbl_header_timer'):
+            self.lbl_header_timer.setText(f"⏱️ {time_str}")
 
     def pause_timer(self):
         self.timer.stop()
@@ -1020,20 +1058,27 @@ class StudyReaderView(QWidget):
         self.timer.stop()
         self.elapsed_seconds = 0
         self.lbl_timer.setText("00:00:00")
+        if hasattr(self, 'lbl_header_timer'):
+            self.lbl_header_timer.setText("⏱️ 00:00:00")
 
     def save_and_pause(self):
         self.pause_timer()
         self.save_current_page()
         self.save_notes()
 
-        if self.block_id and self.elapsed_seconds > 0:
+        if self.block_id:
             db = SessionLocal()
             try:
                 block = db.query(StudyBlock).filter(StudyBlock.id == self.block_id).first()
                 if block:
-                    block.time_spent_seconds = (block.time_spent_seconds or 0) + self.elapsed_seconds
+                    if self.elapsed_seconds > 0:
+                        block.time_spent_seconds = (block.time_spent_seconds or 0) + self.elapsed_seconds
+                        self.elapsed_seconds = 0
+                    
+                    if block.status == BlockStatus.PENDENTE:
+                        block.status = BlockStatus.EM_ANDAMENTO
+                    
                     db.commit()
-                    self.elapsed_seconds = 0
             except Exception as e:
                 db.rollback()
                 print(f"Erro ao salvar tempo de estudo: {e}")
@@ -1052,7 +1097,7 @@ class StudyReaderView(QWidget):
             block = db.query(StudyBlock).filter(StudyBlock.id == self.block_id).first()
             if block:
                 block.status = BlockStatus.CONCLUIDO
-                block.completed_at = datetime.utcnow()
+                block.completed_at = datetime.now(timezone.utc)
                 block.time_spent_seconds = (block.time_spent_seconds or 0) + self.elapsed_seconds
                 db.commit()
                 self.elapsed_seconds = 0

@@ -42,7 +42,6 @@ class MainWindow(QMainWindow):
         self.sidebar_widget = QWidget()
         self.sidebar_widget.setFixedWidth(220)
         
-        # Estilo Global QSS para a Sidebar e seus Botões
         self.sidebar_widget.setStyleSheet("""
             QWidget#SidebarWidget {
                 background-color: #1E1E2E;
@@ -93,40 +92,33 @@ class MainWindow(QMainWindow):
         sidebar_layout.setContentsMargins(12, 12, 12, 12)
         sidebar_layout.setSpacing(8)
 
-        # Título / Logo
         lbl_title = QLabel("📚 EstudoFlow")
         lbl_title.setObjectName("AppTitle")
         sidebar_layout.addWidget(lbl_title)
-        
         sidebar_layout.addSpacing(10)
 
-        # Botões Principais de Navegação
         self.nav_buttons = []
 
         btn_dash = QPushButton("📊  Dashboard")
         btn_subj = QPushButton("📚  Matérias e Ciclo")
         btn_reader = QPushButton("📖  Leitor e Estudo")
-        btn_errors = QPushButton("🏷️  Caderno de Erros")  # 👈 1. Botão Criado
+        btn_errors = QPushButton("🏷️  Caderno de Erros")
         btn_import = QPushButton("📥  Importar PDF")
         btn_settings = QPushButton("⚙️  Configurações")
 
-        # 👈 2. Adicionado btn_errors no loop de botões
         all_buttons = [btn_dash, btn_subj, btn_reader, btn_errors, btn_import, btn_settings]
 
         for idx, btn in enumerate(all_buttons):
             btn.setProperty("class", "nav-btn")
             btn.setCheckable(True)
-            # Ao clicar, atualiza a view e marca o botão correspondente
             btn.clicked.connect(lambda _, i=idx: self.switch_view(i))
             sidebar_layout.addWidget(btn)
             self.nav_buttons.append(btn)
 
-        # Espaçador Flexível para empurrar a busca e o rodapé para baixo
         sidebar_layout.addSpacerItem(
             QSpacerItem(20, 40, QSizePolicy.Minimum, QSizePolicy.Expanding)
         )
 
-        # 🔍 Botão de Busca Global na Sidebar (Destaque)
         btn_global_search = QPushButton("🔍 Busca Global (Ctrl+F)")
         btn_global_search.setObjectName("btn_search")
         btn_global_search.clicked.connect(self.open_global_search)
@@ -134,45 +126,50 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(self.sidebar_widget, stretch=0)
 
-        # ⌨️ Atalho de Teclado Global (Ctrl+F)
         self.shortcut_search = QShortcut(QKeySequence("Ctrl+F"), self)
         self.shortcut_search.activated.connect(self.open_global_search)
 
         # -------------------------------------------------------------
-        # 2. Central Stacked Views (Pilha de Telas)
+        # 2. Pilha de Telas (QStackedWidget)
         # -------------------------------------------------------------
         self.stack = QStackedWidget()
-        
+
+        # Instanciação das Telas
         self.dash_view = DashboardView()
-        self.dash_view.start_study_signal.connect(self.open_study_session)
-
         self.subj_view = SubjectView()
-        self.subj_view.start_study_signal.connect(self.open_study_session)
         self.reader_view = StudyReaderView()
+        self.errors_view = ErrorNotebookView()
+        self.import_view = PDFImportView()
+        self.settings_view = SettingsView()
 
-        # Conecta o sinal do leitor para alternar/esconder a sidebar esquerda
+        # Conexão de Sinais
+        self.dash_view.start_study_signal.connect(self.open_study_session)
+        self.subj_view.start_study_signal.connect(self.open_study_session)
+        
+        self.reader_view.back_requested.connect(self.on_reader_back)
+        self.reader_view.block_completed.connect(self.dash_view.refresh)
+
         if hasattr(self.reader_view, 'toggle_left_sidebar_requested'):
             self.reader_view.toggle_left_sidebar_requested.connect(self.toggle_left_sidebar)
 
-        self.reader_view.back_requested.connect(lambda: self.switch_view(0))
-
-        self.errors_view = ErrorNotebookView()  # 👈 3. Instância do Caderno de Erros
-        self.import_view = PDFImportView()
         self.import_view.import_requested.connect(self.handle_import)
-        self.settings_view = SettingsView()
+        self.settings_view.app_reset.connect(self.handle_app_reset)
 
+        # Adiciona na ordem dos Índices do Menu
         self.stack.addWidget(self.dash_view)      # Index 0
         self.stack.addWidget(self.subj_view)      # Index 1
         self.stack.addWidget(self.reader_view)    # Index 2
-        self.stack.addWidget(self.errors_view)    # Index 3 (👈 Nova tela adicionada na pilha)
+        self.stack.addWidget(self.errors_view)    # Index 3
         self.stack.addWidget(self.import_view)    # Index 4
         self.stack.addWidget(self.settings_view)  # Index 5
 
         layout.addWidget(self.stack, stretch=1)
         
-        self.settings_view.app_reset.connect(self.handle_app_reset)
-        
-        # Seleciona o Dashboard por padrão no início
+        self.switch_view(0)
+
+    
+    def on_reader_back(self):
+        self.dash_view.refresh()  # Correção: chama self.dash_view
         self.switch_view(0)
 
     def open_global_search(self):

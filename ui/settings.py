@@ -22,6 +22,11 @@ class SettingsView(QWidget):
         self.init_ui()
         self.refresh_stats()
 
+    def showEvent(self, event):
+        """Garante que os estatísticas e os cards sejam atualizados ao visualizar a tela."""
+        super().showEvent(event)
+        self.refresh_stats()
+
     def init_ui(self):
         self.setStyleSheet("""
             QWidget {
@@ -124,7 +129,6 @@ class SettingsView(QWidget):
 
         layout.addWidget(group_stats)
 
-
         # ---------------- 4. GRUPO: GESTÃO DE DADOS (BACKUP) ----------------
         group_backup = QGroupBox("📦 Gestão de Dados & Backup")
         backup_layout = QVBoxLayout(group_backup)
@@ -201,8 +205,6 @@ class SettingsView(QWidget):
                 self.lbl_stat_notes.setText(f"📝 Anotações: {notes_cnt}")
             except Exception as e:
                 print(f"Erro ao carregar estatísticas: {e}")
-
-
 
     def export_backup(self):
         path, _ = QFileDialog.getSaveFileName(self, "Salvar Backup", "estudoflow_backup.zip", "ZIP Files (*.zip)")

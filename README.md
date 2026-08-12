@@ -66,7 +66,7 @@ Ele elimina a necessidade de usar planilhas complexas, leitores de PDF genérico
 
 1. **Clone o repositório:**
    ```bash
-   git clone [https://github.com/seu-usuario/estudoFlow.git](https://github.com/seu-usuario/estudoFlow.git)
+   git clone (https://github.com/dev-ansu/estudoFlow.git)
    cd estudoFlow
 
 2. **Crie e ative um ambiente virtual (venv):**
