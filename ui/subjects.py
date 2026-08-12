@@ -130,18 +130,15 @@ class OrderableTreeWidget(QTreeWidget):
 
         dragged_type = dragged_item.data(0, Qt.UserRole + 1)
 
-        # 1. Impede arrastar blocos de estudo para fora ou dentro de outros locais
+        # 1. Impede arrastar blocos de estudo
         if dragged_type == "BLOCK":
             event.ignore()
             return
 
-        # 2. Impede soltar tópicos dentro de outros tópicos criando hierarquias indesejadas
-        # Força o efeito do drop para ocorrer na raiz (sem ser como filho do item alvo)
         target_item = self.itemAt(event.position().toPoint())
         drop_position = self.dropIndicatorPosition()
 
         if target_item:
-            # Se tentar soltar exatamente em cima de um nó (OnItem), converte o drop para "Abaixo do nó"
             if drop_position == QAbstractItemView.OnItem:
                 event.setDropAction(Qt.MoveAction)
 
@@ -423,6 +420,16 @@ class SubjectView(QWidget):
 
         self.refresh()
 
+    def select_subject_by_id(self, subject_id: int):
+        """Seleciona a matéria na lista e força o carregamento imediato dos seus tópicos na árvore."""
+        for i in range(self.list_subjects.count()):
+            item = self.list_subjects.item(i)
+            if item.data(Qt.UserRole) == subject_id:
+                self.list_subjects.setCurrentItem(item)
+                self.selected_subject_id = subject_id
+                self.load_topics(subject_id)  # <-- Garante a montagem da árvore antes de buscar o tópico
+                break
+
     def move_subject(self, action):
         row = self.list_subjects.currentRow()
         count = self.list_subjects.count()
@@ -450,22 +457,18 @@ class SubjectView(QWidget):
         self.save_subjects_order()
 
     def save_subjects_order(self):
-        db = SessionLocal()
-        try:
-            for i in range(self.list_subjects.count()):
-                item = self.list_subjects.item(i)
-                subj_id = item.data(Qt.UserRole)
-                if subj_id:
-                    subj = db.query(Subject).filter(Subject.id == subj_id).first()
-                    if subj:
-                        subj.order = i
-            db.commit()
-        except Exception:
-            db.rollback()
-        finally:
-            db.close()
-            
-        self.refresh()
+        with SessionLocal() as db:
+            try:
+                for i in range(self.list_subjects.count()):
+                    item = self.list_subjects.item(i)
+                    subj_id = item.data(Qt.UserRole)
+                    if subj_id:
+                        subj = db.query(Subject).filter(Subject.id == subj_id).first()
+                        if subj:
+                            subj.order = i
+                db.commit()
+            except Exception:
+                db.rollback()
 
     def refresh(self):
         self.list_subjects.clear()
@@ -473,32 +476,29 @@ class SubjectView(QWidget):
         self.lbl_title.setText("<span style='color: #A6ADC8;'>Selecione uma matéria na lista à esquerda</span>")
         self.selected_subject_id = None
         
-        db = SessionLocal()
-        subjects = db.query(Subject).order_by(Subject.order.asc(), Subject.id.asc()).all()
-        
-        for idx, s in enumerate(subjects, start=1):
-            item = QListWidgetItem(f"{idx}º  |  {s.name}")
-            item.setData(Qt.UserRole, s.id)
-            self.list_subjects.addItem(item)
+        with SessionLocal() as db:
+            subjects = db.query(Subject).order_by(Subject.order.asc(), Subject.id.asc()).all()
             
-        db.close()
-        
+            for idx, s in enumerate(subjects, start=1):
+                item = QListWidgetItem(f"{idx}º  |  {s.name}")
+                item.setData(Qt.UserRole, s.id)
+                self.list_subjects.addItem(item)
+
     def add_subject(self):
         text, ok = QInputDialog.getText(self, "Nova Matéria", "Nome da Matéria:")
         if ok and text.strip():
-            db = SessionLocal()
-            try:
-                last_subj = db.query(Subject).order_by(Subject.order.desc()).first()
-                max_order = (last_subj.order + 1) if (last_subj and last_subj.order is not None) else 0
+            with SessionLocal() as db:
+                try:
+                    last_subj = db.query(Subject).order_by(Subject.order.desc()).first()
+                    max_order = (last_subj.order + 1) if (last_subj and last_subj.order is not None) else 0
 
-                new_subj = Subject(name=text.strip(), order=max_order)
-                db.add(new_subj)
-                db.commit()
-                self.refresh()
-            except Exception:
-                QMessageBox.warning(self, "Erro", "A matéria já existe ou ocorreu um erro.")
-            finally:
-                db.close()
+                    new_subj = Subject(name=text.strip(), order=max_order)
+                    db.add(new_subj)
+                    db.commit()
+                    self.refresh()
+                except Exception:
+                    db.rollback()
+                    QMessageBox.warning(self, "Erro", "A matéria já existe ou ocorreu um erro ao salvar.")
 
     def start_study_selected(self):
         current_item = self.tree_topics.currentItem()
@@ -514,196 +514,189 @@ class SubjectView(QWidget):
                 self.start_study_signal.emit(block_id)
         elif item_type == "TOPIC":
             topic_id = current_item.data(0, Qt.UserRole)
-            db = SessionLocal()
-            block = db.query(StudyBlock).filter(
-                StudyBlock.topic_id == topic_id,
-                StudyBlock.status != BlockStatus.IGNORADO
-            ).order_by(StudyBlock.page_start.asc()).first()
-            db.close()
+            with SessionLocal() as db:
+                block = db.query(StudyBlock).filter(
+                    StudyBlock.topic_id == topic_id,
+                    StudyBlock.status != BlockStatus.IGNORADO
+                ).order_by(StudyBlock.page_start.asc()).first()
 
-            if block:
-                self.start_study_signal.emit(block.id)
-            else:
-                QMessageBox.information(self, "Aviso", "Não há blocos de estudo disponíveis para este tópico.")
+                if block:
+                    self.start_study_signal.emit(block.id)
+                else:
+                    QMessageBox.information(self, "Aviso", "Não há blocos de estudo disponíveis para este tópico.")
 
     def on_item_double_clicked(self, item, column):
         self.start_study_selected()
 
     def load_topics(self, subject_id):
         self.tree_topics.clear()
-        db = SessionLocal()
-        subj = db.query(Subject).filter(Subject.id == subject_id).first()
-        if not subj:
-            db.close()
-            return
+        with SessionLocal() as db:
+            subj = db.query(Subject).filter(Subject.id == subject_id).first()
+            if not subj:
+                return
 
-        self.lbl_title.setText(f"<span style='color: #89B4FA;'>{subj.name}</span> <span style='color: #A6ADC8; font-size: 14px;'>(Tópicos e Materiais)</span>")
+            self.lbl_title.setText(f"<span style='color: #89B4FA;'>{subj.name}</span> <span style='color: #A6ADC8; font-size: 14px;'>(Tópicos e Materiais)</span>")
 
-        all_topics = (
-            db.query(Topic)
-            .join(PdfDocument)
-            .options(joinedload(Topic.blocks))
-            .filter(PdfDocument.subject_id == subject_id)
-            .order_by(Topic.order.asc(), Topic.id.asc())
-            .all()
-        )
+            all_topics = (
+                db.query(Topic)
+                .join(PdfDocument)
+                .options(joinedload(Topic.blocks))
+                .filter(PdfDocument.subject_id == subject_id)
+                .order_by(Topic.order.asc(), Topic.id.asc())
+                .all()
+            )
 
-        for t in all_topics:
-            item = QTreeWidgetItem([f"🔖 {t.title}", ""])
-            item.setData(0, Qt.UserRole, t.id)
-            item.setData(0, Qt.UserRole + 1, "TOPIC")
-            
-            if t.blocks:
-                sorted_blocks = sorted(t.blocks, key=lambda b: b.page_start)
-                for b in sorted_blocks:
-                    status_str = "⏳ Pendente"
-                    if b.status == BlockStatus.EM_ANDAMENTO:
-                        status_str = "▶️ Em Andamento"
-                    elif b.status == BlockStatus.CONCLUIDO:
-                        status_str = "✅ Concluído"
-                    elif b.status == BlockStatus.IGNORADO:
-                        status_str = "🚫 Ignorado"
+            for t in all_topics:
+                item = QTreeWidgetItem([f"🔖 {t.title}", ""])
+                item.setData(0, Qt.UserRole, t.id)
+                item.setData(0, Qt.UserRole + 1, "TOPIC")
+                
+                if t.blocks:
+                    sorted_blocks = sorted(t.blocks, key=lambda b: b.page_start)
+                    for b in sorted_blocks:
+                        status_str = "⏳ Pendente"
+                        if b.status == BlockStatus.EM_ANDAMENTO:
+                            status_str = "▶️ Em Andamento"
+                        elif b.status == BlockStatus.CONCLUIDO:
+                            status_str = "✅ Concluído"
+                        elif b.status == BlockStatus.IGNORADO:
+                            status_str = "🚫 Ignorado"
 
-                    block_item = QTreeWidgetItem([f"   ↳ Bloco (Págs {b.page_start} - {b.page_end})", status_str])
-                    block_item.setData(0, Qt.UserRole, b.id)
-                    block_item.setData(0, Qt.UserRole + 1, "BLOCK")
-                    item.addChild(block_item)
+                        block_item = QTreeWidgetItem([f"   ↳ Bloco (Págs {b.page_start} - {b.page_end})", status_str])
+                        block_item.setData(0, Qt.UserRole, b.id)
+                        block_item.setData(0, Qt.UserRole + 1, "BLOCK")
+                        item.addChild(block_item)
 
-            self.tree_topics.addTopLevelItem(item)
+                self.tree_topics.addTopLevelItem(item)
 
-        self.tree_topics.expandAll()
-        db.close()
+            self.tree_topics.expandAll()
 
     def export_notes(self):
         if not self.selected_subject_id:
             QMessageBox.warning(self, "Aviso", "Selecione uma matéria para visualizar o resumo.")
             return
 
-        db = SessionLocal()
-        try:
-            current_item = self.tree_topics.currentItem()
-            selected_topic_id = None
-            
-            if current_item and current_item.data(0, Qt.UserRole + 1) == "TOPIC":
-                selected_topic_id = current_item.data(0, Qt.UserRole)
+        with SessionLocal() as db:
+            try:
+                current_item = self.tree_topics.currentItem()
+                selected_topic_id = None
+                
+                if current_item and current_item.data(0, Qt.UserRole + 1) == "TOPIC":
+                    selected_topic_id = current_item.data(0, Qt.UserRole)
 
-            subj = db.query(Subject).filter(Subject.id == self.selected_subject_id).first()
-            if not subj:
-                return
+                subj = db.query(Subject).filter(Subject.id == self.selected_subject_id).first()
+                if not subj:
+                    return
 
-            query = (
-                db.query(Topic)
-                .join(PdfDocument)
-                .options(
-                    subqueryload(Topic.blocks).subqueryload(StudyBlock.notes),
-                    joinedload(Topic.pdf).subqueryload(PdfDocument.highlights)
+                query = (
+                    db.query(Topic)
+                    .join(PdfDocument)
+                    .options(
+                        subqueryload(Topic.blocks).subqueryload(StudyBlock.notes),
+                        joinedload(Topic.pdf).subqueryload(PdfDocument.highlights)
+                    )
+                    .filter(PdfDocument.subject_id == self.selected_subject_id)
                 )
-                .filter(PdfDocument.subject_id == self.selected_subject_id)
-            )
 
-            if selected_topic_id:
-                topics = query.filter(Topic.id == selected_topic_id).all()
-            else:
-                topics = query.order_by(Topic.order.asc(), Topic.id.asc()).all()
+                if selected_topic_id:
+                    topics = query.filter(Topic.id == selected_topic_id).all()
+                else:
+                    topics = query.order_by(Topic.order.asc(), Topic.id.asc()).all()
 
-            lines_md = [f"# Resumo de Estudos: {subj.name}\n\n"]
-            lines_txt = [f"# RESUMO DE ESTUDOS: {subj.name.upper()}\n", "=" * 60 + "\n\n"]
+                lines_md = [f"# Resumo de Estudos: {subj.name}\n\n"]
+                lines_txt = [f"# RESUMO DE ESTUDOS: {subj.name.upper()}\n", "=" * 60 + "\n\n"]
 
-            total_items_count = 0
+                total_items_count = 0
 
-            for topic in topics:
-                has_topic_header = False
+                for topic in topics:
+                    has_topic_header = False
 
-                def ensure_topic_header():
-                    nonlocal has_topic_header
-                    if not has_topic_header:
-                        lines_md.append(f"## 📌 Tópico: {topic.title}\n\n")
-                        lines_txt.append(f"📌 TÓPICO: {topic.title}\n" + "-" * 40 + "\n")
-                        has_topic_header = True
+                    def ensure_topic_header():
+                        nonlocal has_topic_header
+                        if not has_topic_header:
+                            lines_md.append(f"## 📌 Tópico: {topic.title}\n\n")
+                            lines_txt.append(f"📌 TÓPICO: {topic.title}\n" + "-" * 40 + "\n")
+                            has_topic_header = True
 
-                for block in topic.blocks:
-                    if block.notes:
-                        ensure_topic_header()
-                        lines_md.append(f"### 📄 Bloco (Págs. {block.page_start} - {block.page_end}) - Anotações\n")
-                        lines_txt.append(f"  • Bloco (Págs {block.page_start} - {block.page_end}) - Anotações:\n")
+                    for block in topic.blocks:
+                        if block.notes:
+                            ensure_topic_header()
+                            lines_md.append(f"### 📄 Bloco (Págs. {block.page_start} - {block.page_end}) - Anotações\n")
+                            lines_txt.append(f"  • Bloco (Págs {block.page_start} - {block.page_end}) - Anotações:\n")
 
-                        for note in block.notes:
-                            note_text = note.content.strip()
-                            lines_md.append(f"- **[Pág. {note.page_number}]**: {note_text}\n")
-                            lines_txt.append(f"    - [Pág. {note.page_number}]: {note_text}\n")
-                            total_items_count += 1
+                            for note in block.notes:
+                                note_text = note.content.strip()
+                                lines_md.append(f"- **[Pág. {note.page_number}]**: {note_text}\n")
+                                lines_txt.append(f"    - [Pág. {note.page_number}]: {note_text}\n")
+                                total_items_count += 1
 
-                        lines_md.append("\n")
-                        lines_txt.append("\n")
+                            lines_md.append("\n")
+                            lines_txt.append("\n")
 
-                if topic.pdf and topic.pdf.highlights:
-                    topic_highlights = [
-                        h for h in topic.pdf.highlights 
-                        if topic.page_start <= h.page_number <= topic.page_end and h.selected_text
-                    ]
+                    if topic.pdf and topic.pdf.highlights:
+                        topic_highlights = [
+                            h for h in topic.pdf.highlights 
+                            if topic.page_start <= h.page_number <= topic.page_end and h.selected_text
+                        ]
 
-                    if topic_highlights:
-                        ensure_topic_header()
-                        lines_md.append("### 🖍️ Trechos Grifados\n")
-                        lines_txt.append("  • Trechos Grifados:\n")
+                        if topic_highlights:
+                            ensure_topic_header()
+                            lines_md.append("### 🖍️ Trechos Grifados\n")
+                            lines_txt.append("  • Trechos Grifados:\n")
 
-                        topic_highlights.sort(key=lambda h: h.page_number)
+                            topic_highlights.sort(key=lambda h: h.page_number)
 
-                        for hl in topic_highlights:
-                            highlight_text = hl.selected_text.strip().replace("\n", " ")
-                            lines_md.append(f"> **[Pág. {hl.page_number}]** _{highlight_text}_\n\n")
-                            lines_txt.append(f'    - [Pág. {hl.page_number}]: "{highlight_text}"\n')
-                            total_items_count += 1
+                            for hl in topic_highlights:
+                                highlight_text = hl.selected_text.strip().replace("\n", " ")
+                                lines_md.append(f"> **[Pág. {hl.page_number}]** _{highlight_text}_\n\n")
+                                lines_txt.append(f'    - [Pág. {hl.page_number}]: "{highlight_text}"\n')
+                                total_items_count += 1
 
-                        lines_md.append("\n")
-                        lines_txt.append("\n")
+                            lines_md.append("\n")
+                            lines_txt.append("\n")
 
-            if total_items_count == 0:
-                QMessageBox.information(self, "Exportação", "Nenhuma anotação ou grifo foi encontrado para este escopo.")
-                return
+                if total_items_count == 0:
+                    QMessageBox.information(self, "Exportação", "Nenhuma anotação ou grifo foi encontrado para este escopo.")
+                    return
 
-            preview_dialog = NotesPreviewDialog(
-                subject_name=subj.name,
-                content_md="".join(lines_md),
-                content_txt="".join(lines_txt),
-                parent=self
-            )
-            preview_dialog.exec()
+                preview_dialog = NotesPreviewDialog(
+                    subject_name=subj.name,
+                    content_md="".join(lines_md),
+                    content_txt="".join(lines_txt),
+                    parent=self
+                )
+                preview_dialog.exec()
 
-        except Exception as e:
-            QMessageBox.critical(self, "Erro", f"Falha ao carregar anotações e grifos: {str(e)}")
-        finally:
-            db.close()
+            except Exception as e:
+                QMessageBox.critical(self, "Erro", f"Falha ao carregar anotações e grifos: {str(e)}")
 
     def delete_selected_subject(self):
         if not self.selected_subject_id:
             QMessageBox.warning(self, "Aviso", "Selecione uma matéria na lista para apagar.")
             return
 
-        db = SessionLocal()
-        try:
-            subj = db.query(Subject).filter(Subject.id == self.selected_subject_id).first()
-            if not subj:
-                return
+        with SessionLocal() as db:
+            try:
+                subj = db.query(Subject).filter(Subject.id == self.selected_subject_id).first()
+                if not subj:
+                    return
 
-            confirm = QMessageBox.question(
-                self, "ATENÇÃO - Excluir Matéria", 
-                f"Tem certeza que deseja apagar a matéria '{subj.name}'?\n\n"
-                f"Isso apagará DEFINITIVAMENTE todos os tópicos, PDFs, grifos e o histórico de estudos desta matéria.",
-                QMessageBox.Yes | QMessageBox.No
-            )
+                confirm = QMessageBox.question(
+                    self, "ATENÇÃO - Excluir Matéria", 
+                    f"Tem certeza que deseja apagar a matéria '{subj.name}'?\n\n"
+                    f"Isso apagará DEFINITIVAMENTE todos os tópicos, PDFs, grifos e o histórico de estudos desta matéria.",
+                    QMessageBox.Yes | QMessageBox.No
+                )
 
-            if confirm == QMessageBox.Yes:
-                db.delete(subj)
-                db.commit()
-                QMessageBox.information(self, "Sucesso", "Matéria e todos os seus dados foram excluídos com sucesso.")
-                self.refresh()
-                
-        except Exception as e:
-            db.rollback()
-            QMessageBox.critical(self, "Erro", f"Falha ao excluir matéria: {str(e)}")
-        finally:
-            db.close()
+                if confirm == QMessageBox.Yes:
+                    db.delete(subj)
+                    db.commit()
+                    QMessageBox.information(self, "Sucesso", "Matéria e todos os seus dados foram excluídos com sucesso.")
+                    self.refresh()
+                    
+            except Exception as e:
+                db.rollback()
+                QMessageBox.critical(self, "Erro", f"Falha ao excluir matéria: {str(e)}")
 
     def on_subject_selected(self, item):
         subj_id = item.data(Qt.UserRole)
@@ -739,25 +732,23 @@ class SubjectView(QWidget):
         self.save_topics_order()
 
     def save_topics_order(self):
-        db = SessionLocal()
-        try:
-            count = self.tree_topics.topLevelItemCount()
-            for i in range(count):
-                item = self.tree_topics.topLevelItem(i)
-                topic_id = item.data(0, Qt.UserRole)
-                item_type = item.data(0, Qt.UserRole + 1)
-                
-                if topic_id and item_type == "TOPIC":
-                    t = db.query(Topic).filter(Topic.id == topic_id).first()
-                    if t:
-                        t.order = i
-                        t.parent_id = None  # Garante que a raiz do DB permaneça limpa sem sub-tópicos
+        with SessionLocal() as db:
+            try:
+                count = self.tree_topics.topLevelItemCount()
+                for i in range(count):
+                    item = self.tree_topics.topLevelItem(i)
+                    topic_id = item.data(0, Qt.UserRole)
+                    item_type = item.data(0, Qt.UserRole + 1)
+                    
+                    if topic_id and item_type == "TOPIC":
+                        t = db.query(Topic).filter(Topic.id == topic_id).first()
+                        if t:
+                            t.order = i
+                            t.parent_id = None
 
-            db.commit()
-        except Exception:
-            db.rollback()
-        finally:
-            db.close()
+                db.commit()
+            except Exception:
+                db.rollback()
 
     def import_pdf_and_generate_blocks(self):
         if not self.selected_subject_id:
@@ -772,66 +763,64 @@ class SubjectView(QWidget):
         if not ok:
             return
 
-        db = SessionLocal()
-        try:
-            filename = os.path.basename(file_path)
-            topic_title = os.path.splitext(filename)[0]
-            
-            file_size_bytes = os.path.getsize(file_path)
-            doc = fitz.open(file_path)
-            total_pages = len(doc)
-            doc.close()
+        with SessionLocal() as db:
+            try:
+                filename = os.path.basename(file_path)
+                topic_title = os.path.splitext(filename)[0]
+                
+                file_size_bytes = os.path.getsize(file_path)
+                doc = fitz.open(file_path)
+                total_pages = len(doc)
+                doc.close()
 
-            pdf_doc = PdfDocument(
-                subject_id=self.selected_subject_id,
-                title=topic_title,
-                file_path=file_path, 
-                file_size_bytes=file_size_bytes,
-                total_pages=total_pages
-            )
-            db.add(pdf_doc)
-            db.flush()
-
-            last_t = db.query(Topic).order_by(Topic.order.desc()).first()
-            max_order = (last_t.order + 1) if (last_t and last_t.order is not None) else 0
-
-            topic = Topic(
-                pdf_id=pdf_doc.id,
-                title=topic_title,
-                page_start=1,
-                page_end=total_pages,
-                order=max_order
-            )
-            db.add(topic)
-            db.flush()
-
-            start_p = 1
-            while start_p <= total_pages:
-                end_p = min(start_p + pages_per_block - 1, total_pages)
-                block = StudyBlock(
-                    topic_id=topic.id,
-                    page_start=start_p,
-                    page_end=end_p,
-                    current_page=start_p,
-                    status=BlockStatus.PENDENTE
+                pdf_doc = PdfDocument(
+                    subject_id=self.selected_subject_id,
+                    title=topic_title,
+                    file_path=file_path, 
+                    file_size_bytes=file_size_bytes,
+                    total_pages=total_pages
                 )
-                db.add(block)
-                start_p = end_p + 1
+                db.add(pdf_doc)
+                db.flush()
 
-            db.commit()
-            QMessageBox.information(
-                self, 
-                "PDF Importado", 
-                f"PDF '{filename}' importado com sucesso!\n"
-                f"• Total de páginas: {total_pages}\n"
-                f"• Blocos gerados: {((total_pages - 1) // pages_per_block) + 1}"
-            )
-            self.load_topics(self.selected_subject_id)
-        except Exception as e:
-            db.rollback()
-            QMessageBox.critical(self, "Erro", f"Erro ao importar PDF: {str(e)}")
-        finally:
-            db.close()
+                last_t = db.query(Topic).order_by(Topic.order.desc()).first()
+                max_order = (last_t.order + 1) if (last_t and last_t.order is not None) else 0
+
+                topic = Topic(
+                    pdf_id=pdf_doc.id,
+                    title=topic_title,
+                    page_start=1,
+                    page_end=total_pages,
+                    order=max_order
+                )
+                db.add(topic)
+                db.flush()
+
+                start_p = 1
+                while start_p <= total_pages:
+                    end_p = min(start_p + pages_per_block - 1, total_pages)
+                    block = StudyBlock(
+                        topic_id=topic.id,
+                        page_start=start_p,
+                        page_end=end_p,
+                        current_page=start_p,
+                        status=BlockStatus.PENDENTE
+                    )
+                    db.add(block)
+                    start_p = end_p + 1
+
+                db.commit()
+                QMessageBox.information(
+                    self, 
+                    "PDF Importado", 
+                    f"PDF '{filename}' importado com sucesso!\n"
+                    f"• Total de páginas: {total_pages}\n"
+                    f"• Blocos gerados: {((total_pages - 1) // pages_per_block) + 1}"
+                )
+                self.load_topics(self.selected_subject_id)
+            except Exception as e:
+                db.rollback()
+                QMessageBox.critical(self, "Erro", f"Erro ao importar PDF: {str(e)}")
 
     def delete_selected_topic(self):
         current_item = self.tree_topics.currentItem()
@@ -851,29 +840,26 @@ class SubjectView(QWidget):
         )
 
         if confirm == QMessageBox.Yes:
-            db = SessionLocal()
-            try:
-                topic = db.query(Topic).filter(Topic.id == topic_id).first()
-                if not topic:
-                    db.close()
-                    return
+            with SessionLocal() as db:
+                try:
+                    topic = db.query(Topic).filter(Topic.id == topic_id).first()
+                    if not topic:
+                        return
 
-                pdf = topic.pdf
+                    pdf = topic.pdf
 
-                db.delete(topic)
+                    db.delete(topic)
 
-                if pdf and len(pdf.topics) == 1:
-                    db.delete(pdf)
+                    if pdf and len(pdf.topics) == 1:
+                        db.delete(pdf)
 
-                db.commit()
-                QMessageBox.information(self, "Sucesso", "Tópico excluído com sucesso.")
-                self.load_topics(self.selected_subject_id)
+                    db.commit()
+                    QMessageBox.information(self, "Sucesso", "Tópico excluído com sucesso.")
+                    self.load_topics(self.selected_subject_id)
 
-            except Exception as e:
-                db.rollback()
-                QMessageBox.critical(self, "Erro", f"Falha ao apagar tópico: {str(e)}")
-            finally:
-                db.close()
+                except Exception as e:
+                    db.rollback()
+                    QMessageBox.critical(self, "Erro", f"Falha ao apagar tópico: {str(e)}")
 
     def reset_subject_progress(self):
         if not self.selected_subject_id:
@@ -887,23 +873,21 @@ class SubjectView(QWidget):
         )
 
         if confirm == QMessageBox.Yes:
-            db = SessionLocal()
-            try:
-                blocks = (
-                    db.query(StudyBlock)
-                    .join(Topic)
-                    .join(PdfDocument)
-                    .filter(PdfDocument.subject_id == self.selected_subject_id)
-                    .all()
-                )
-                for b in blocks:
-                    b.status = BlockStatus.PENDENTE
-                    b.current_page = b.page_start
-                db.commit()
-                QMessageBox.information(self, "Sucesso", "Progresso da matéria zerado com sucesso!")
-                self.load_topics(self.selected_subject_id)
-            except Exception as e:
-                db.rollback()
-                QMessageBox.critical(self, "Erro", f"Falha ao zerar progresso: {str(e)}")
-            finally:
-                db.close()
+            with SessionLocal() as db:
+                try:
+                    blocks = (
+                        db.query(StudyBlock)
+                        .join(Topic)
+                        .join(PdfDocument)
+                        .filter(PdfDocument.subject_id == self.selected_subject_id)
+                        .all()
+                    )
+                    for b in blocks:
+                        b.status = BlockStatus.PENDENTE
+                        b.current_page = b.page_start
+                    db.commit()
+                    QMessageBox.information(self, "Sucesso", "Progresso da matéria zerado com sucesso!")
+                    self.load_topics(self.selected_subject_id)
+                except Exception as e:
+                    db.rollback()
+                    QMessageBox.critical(self, "Erro", f"Falha ao zerar progresso: {str(e)}")

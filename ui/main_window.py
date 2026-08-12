@@ -9,11 +9,10 @@ from ui.dashboard import DashboardView
 from ui.subjects import SubjectView
 from ui.pdf_import import PDFImportView
 from ui.toc_review import TOCReviewView
-from ui.study_session import StudySessionView
 from ui.settings import SettingsView
 from ui.reader import StudyReaderView
 from ui.global_search_dialog import GlobalSearchDialog
-from ui.error_notebook import ErrorNotebookView  # 👈 Import do Caderno de Erros
+from ui.error_notebook import ErrorNotebookView
 
 from services.toc_detector import TOCDetector
 from services.topic_parser import TopicParser
@@ -177,24 +176,20 @@ class MainWindow(QMainWindow):
 
         # Conexão dos sinais
         self.toc_review_view.completed.connect(self.process_next_pdf_in_queue)
-        self.toc_review_view.back_requested.connect(self.show_pdf_import_view) # 👈 Conecta o botão de voltar
+        self.toc_review_view.back_requested.connect(self.show_pdf_import_view)
 
-        # Adiciona e exibe no self.stack (nome correto no seu código)
+        # Adiciona e exibe na pilha de views
         self.stack.addWidget(self.toc_review_view)
         self.stack.setCurrentWidget(self.toc_review_view)
 
     def show_pdf_import_view(self):
         """Retorna para a tela de seleção/importação preservando os arquivos."""
         self.import_queue.clear()
-        
-        # Marca que estamos voltando intencionalmente da revisão
         self.is_returning_to_import = True
-        
-        # Alterna para a aba de importação (Index 4)
         self.switch_view(4)
     
     def on_reader_back(self):
-        self.dash_view.refresh()  # Correção: chama self.dash_view
+        self.dash_view.refresh()
         self.switch_view(0)
 
     def open_global_search(self):
@@ -207,16 +202,24 @@ class MainWindow(QMainWindow):
             # 1. REDIRECIONAMENTO PARA O CADERNO DE ERROS
             # --------------------------------------------------------
             if res_type == "ERROR":
-                # 1. Muda o estado do menu para ativar o botão 'Caderno de Erros' (Index 3)
-                self.switch_view(3)
+                self.switch_view(3)  # Muda para o Caderno de Erros
                 
-                # 2. Se houver um subject_id, aplica no filtro de matérias da aba de erros
-                if res.get("subject_id") and hasattr(self.errors_view, "cb_filter_subject"):
-                    idx = self.errors_view.cb_filter_subject.findData(res.get("subject_id"))
+                # 1. Reseta o filtro de motivos para não ocultar o registro
+                if hasattr(self.errors_view, "cb_filter_reason"):
+                    self.errors_view.cb_filter_reason.blockSignals(True)
+                    self.errors_view.cb_filter_reason.setCurrentIndex(0)
+                    self.errors_view.cb_filter_reason.blockSignals(False)
+
+                # 2. Aplica o filtro de Matéria (se houver)
+                subject_id = res.get("subject_id")
+                if subject_id and hasattr(self.errors_view, "cb_filter_subject"):
+                    idx = self.errors_view.cb_filter_subject.findData(subject_id)
                     if idx != -1:
+                        self.errors_view.cb_filter_subject.blockSignals(True)
                         self.errors_view.cb_filter_subject.setCurrentIndex(idx)
-                
-                # 3. Recarrega e foca no erro selecionado
+                        self.errors_view.cb_filter_subject.blockSignals(False)
+
+                # 3. Recarrega os erros filtrados e seleciona/foca a linha exata
                 self.errors_view.load_errors()
                 if res.get("error_id") and hasattr(self.errors_view, "select_error_by_id"):
                     self.errors_view.select_error_by_id(res.get("error_id"))
@@ -225,7 +228,6 @@ class MainWindow(QMainWindow):
             # 2. REDIRECIONAMENTO PARA MATÉRIAS E CICLO
             # --------------------------------------------------------
             elif res_type == "SUBJECT":
-                # Muda para a tela de Matérias (Index 1)
                 self.switch_view(1)
                 if res.get("subject_id") and hasattr(self.subj_view, "select_subject_by_id"):
                     self.subj_view.select_subject_by_id(res.get("subject_id"))
@@ -234,38 +236,55 @@ class MainWindow(QMainWindow):
             # 3. REDIRECIONAMENTO PARA TÓPICOS
             # --------------------------------------------------------
             elif res_type == "TOPIC":
-                # Muda para a tela de Matérias e foca o tópico na árvore
-                self.switch_view(1)
-                if res.get("topic_id"):
-                    self._select_topic_in_tree(res.get("topic_id"))
+                self.switch_view(1)  # Muda para Matérias e Ciclo
+                subject_id = res.get("subject_id")
+                topic_id = res.get("topic_id")
+
+                # Primeiro: Seleciona e carrega a matéria pai
+                if subject_id and hasattr(self.subj_view, "select_subject_by_id"):
+                    self.subj_view.select_subject_by_id(subject_id)
+
+                # Segundo: Expande a árvore e rola até o tópico
+                if topic_id:
+                    self._select_topic_in_tree(topic_id)
 
             # --------------------------------------------------------
-            # 4. REDIRECIONAMENTO PARA LEITOR DE PDF (ANOTAÇÕES E GRIFOS)
+            # 4. REDIRECIONAMENTO PARA LEITOR (ANOTAÇÕES E GRIFOS)
             # --------------------------------------------------------
             elif res_type in ("NOTE", "HIGHLIGHT"):
-                # Abre o leitor na tela (Index 2)
                 self.switch_view(2)
-                # Se o seu reader_view tiver suporte a abrir por nota/grifo:
                 if hasattr(self.reader_view, "jump_to_annotation"):
                     self.reader_view.jump_to_annotation(res)
 
+    
     def _select_topic_in_tree(self, topic_id):
-        """Percorre a árvore de tópicos dentro da subj_view e foca no item buscado."""
+        """Percorre a árvore de tópicos, garante que a árvore esteja carregada e foca no item."""
         tree = self.subj_view.tree_topics
-        
+
         def search_node(parent_item=None):
             count = parent_item.childCount() if parent_item else tree.topLevelItemCount()
             for i in range(count):
                 item = parent_item.child(i) if parent_item else tree.topLevelItem(i)
-                if item.data(Qt.UserRole) == topic_id and item.data(Qt.UserRole + 1) == "TOPIC":
+                
+                # Confere se é um nó do tipo TOPIC com o ID correto
+                if item.data(0, Qt.UserRole) == topic_id and item.data(0, Qt.UserRole + 1) == "TOPIC":
+                    # Expande todos os nós pai
+                    curr = item
+                    while curr is not None:
+                        curr.setExpanded(True)
+                        curr = curr.parent()
+                    
                     tree.setCurrentItem(item)
                     tree.scrollToItem(item)
+                    tree.setFocus()
                     return True
+                
                 if search_node(item):
                     return True
             return False
 
         search_node(None)
+
 
     def toggle_left_sidebar(self):
         """Alterna a visibilidade do menu principal esquerdo."""
@@ -285,18 +304,16 @@ class MainWindow(QMainWindow):
             self.dash_view.refresh()
         elif index == 1:
             self.subj_view.refresh()
-        elif index == 3:  # 👈 4. Recarrega as matérias e questões ao abrir o Caderno de Erros
+        elif index == 3:
             self.errors_view.load_combos()
             self.errors_view.load_errors()
         elif index == 4:
-            # 👈 LÓGICA DE LIMPEZA DA IMPORTAÇÃO:
-            # Se clicou na aba do menu (e não foi pelo botão 'Voltar'), limpa a lista!
             if not self.is_returning_to_import:
                 self.import_view.clear_all_files()
-            # Reseta a flag para as próximas navegações
             self.is_returning_to_import = False
 
         self.stack.setCurrentIndex(index)
+
     def handle_app_reset(self):
         if hasattr(self, 'reader_view'):
             self.reader_view.unload_pdf()
@@ -329,15 +346,6 @@ class MainWindow(QMainWindow):
         if toc_pages:
             topics = TopicParser.parse_toc(file_path, toc_pages, info["pages"])
 
-        review_view = TOCReviewView(file_path, self.current_import_subject_id, topics)
-        
-        if hasattr(review_view, 'set_progress_info'):
-            review_view.set_progress_info(current_index, self.total_imports)
-
-        review_view.completed.connect(self.process_next_pdf_in_queue)
-        
-        self.stack.addWidget(review_view)
-        self.stack.setCurrentWidget(review_view)
         self.show_toc_review(file_path, self.current_import_subject_id, topics, current_index, self.total_imports)
 
     def open_study_session(self, block_id: int):

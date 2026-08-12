@@ -17,12 +17,14 @@ class ErrorReason(str, enum.Enum):
     TEMPO = "Falta de Tempo / Chute"
     OUTRO = "Outro Motivo"
 
+from sqlalchemy import Column, Integer, String, DateTime, ForeignKey, Text, Enum, Boolean
+
 class QuestionError(Base):
     __tablename__ = 'question_errors'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     
-    # Chaves Estrangeiras com CASCADE
+    # Chaves Estrangeiras
     subject_id = Column(Integer, ForeignKey('subjects.id', ondelete="CASCADE"), nullable=False)
     topic_id = Column(Integer, ForeignKey('topics.id', ondelete="SET NULL"), nullable=True)
     
@@ -36,6 +38,9 @@ class QuestionError(Base):
     # Análise do Erro
     reason = Column(Enum(ErrorReason), default=ErrorReason.CONTEUDO, nullable=False)
     explanation = Column(Text, nullable=True)
+    
+    # Novo Campo: Domínio / Resolução da questão
+    is_resolved = Column(Boolean, default=False, nullable=False)
     
     created_at = Column(DateTime, default=datetime.utcnow)
 
