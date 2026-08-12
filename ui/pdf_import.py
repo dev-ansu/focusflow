@@ -368,7 +368,7 @@ class PDFImportView(QWidget):
 
         subject_id = self.cmb_subject.currentData()
         self.import_requested.emit(self.selected_files.copy(), subject_id)
-        self.clear_all_files()
+        # self.clear_all_files()
 
     def showEvent(self, event):
         super().showEvent(event)

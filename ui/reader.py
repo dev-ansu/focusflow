@@ -2,10 +2,11 @@ from datetime import datetime, timezone
 import pymupdf as fitz
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-    QPushButton, QScrollArea, QMessageBox, QFrame, QCheckBox, QTextEdit, QProgressBar
+    QPushButton, QScrollArea, QMessageBox, QFrame, QCheckBox, QTextEdit, QProgressBar, QComboBox
 )
 from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QKeySequence, QShortcut
-from PySide6.QtCore import Qt, QTimer, QTime, Signal, QRect, QPoint
+from PySide6.QtCore import Qt, QTimer, QTime, Signal, QRect, QPoint, QUrl
+from PySide6.QtMultimedia import QSoundEffect
 
 from database.connection import SessionLocal
 from models.models import StudyBlock, BlockStatus, Topic, PdfDocument, Subject, Highlight, Note
@@ -82,6 +83,7 @@ class StudyReaderView(QWidget):
         self.zoom_factor = 1.0
         self.auto_fit_width = True
         self.dark_mode = False
+        self.is_focus_mode = False  # Estado do Modo Foco Total
         
         self.selected_color = "#FFFF00"
         self.color_buttons = {}
@@ -91,9 +93,24 @@ class StudyReaderView(QWidget):
         self.page_end = 1
         self.block_status = None
         
+        # --- CONFIGURAÇÃO DO TIMER / POMODORO ---
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_timer)
-        self.elapsed_seconds = 0
+        self.elapsed_seconds = 0  # Segundos reais acumulados de estudo (salvos no BD)
+
+        # Estados do Modo
+        self.timer_mode = "STOPWATCH"  # "STOPWATCH" ou "POMODORO"
+        self.work_duration = 25 * 60     # 25 minutos
+        self.short_break = 5 * 60        # 5 minutos
+        self.long_break = 15 * 60       # 15 minutos
+        self.pomodoro_state = "WORK"     # "WORK", "BREAK", "LONG_BREAK"
+        self.pomodoro_remaining = self.work_duration
+        self.pomodoros_completed = 0
+
+        # Alerta Sonoro
+        self.alarm_sound = QSoundEffect(self)
+        self.alarm_sound.setSource(QUrl.fromLocalFile("assets/sounds/bell.wav"))
+        self.alarm_sound.setVolume(0.8)
 
         self.setup_shortcuts()
         self.init_ui()
@@ -107,6 +124,10 @@ class StudyReaderView(QWidget):
         QShortcut(QKeySequence("Ctrl++"), self, self.zoom_in)
         QShortcut(QKeySequence("Ctrl+-"), self, self.zoom_out)
         QShortcut(QKeySequence("Ctrl+D"), self, lambda: self.btn_dark_mode.animateClick())
+
+        # Atalhos para Modo Foco (F11 para alternar, Esc para sair)
+        QShortcut(QKeySequence("F11"), self, self.toggle_focus_mode)
+        QShortcut(QKeySequence("Escape"), self, self.exit_focus_mode)
 
         QShortcut(QKeySequence("1"), self, lambda: self.set_highlight_color("#FFFF00"))
         QShortcut(QKeySequence("2"), self, lambda: self.set_highlight_color("#2ECC71"))
@@ -158,14 +179,14 @@ class StudyReaderView(QWidget):
         outer_layout.setSpacing(0)
 
         # 1. TOOLBAR SUPERIOR
-        header_widget = QWidget()
-        header_widget.setStyleSheet("""
+        self.header_widget = QWidget()
+        self.header_widget.setStyleSheet("""
             QWidget {
                 background-color: #1E1E2E;
                 border-bottom: 1px solid #313244;
             }
         """)
-        header_layout = QHBoxLayout(header_widget)
+        header_layout = QHBoxLayout(self.header_widget)
         header_layout.setContentsMargins(12, 8, 12, 8)
 
         self.btn_toggle_left = QPushButton("☰ Menu")
@@ -180,7 +201,7 @@ class StudyReaderView(QWidget):
         self.lbl_header_title = QLabel("Leitor de Estudos")
         self.lbl_header_title.setStyleSheet("font-weight: bold; font-size: 15px; color: #89B4FA; border: none;")
 
-        # Timer no topo (visível apenas quando o painel lateral estiver oculto)
+        # Timer compacto do topo (visível quando a barra de anotações estiver oculta)
         self.lbl_header_timer = QLabel("⏱️ 00:00:00")
         self.lbl_header_timer.setStyleSheet("""
             font-size: 14px; 
@@ -191,8 +212,14 @@ class StudyReaderView(QWidget):
             border-radius: 6px; 
             padding: 4px 10px;
         """)
-        self.lbl_header_timer.setToolTip("Tempo Dedicado (Barra de Anotações Oculta)")
+        self.lbl_header_timer.setToolTip("Tempo Dedicado / Pomodoro")
         self.lbl_header_timer.setVisible(False)
+
+        # Botão Modo Foco Total (F11)
+        self.btn_focus_mode = QPushButton("🖥️ Foco")
+        self.btn_focus_mode.setProperty("class", "tool-btn")
+        self.btn_focus_mode.setToolTip("Modo Foco Total (Atalho: F11)")
+        self.btn_focus_mode.clicked.connect(self.toggle_focus_mode)
 
         self.btn_toggle_right = QPushButton("📝 Anotações")
         self.btn_toggle_right.setProperty("class", "tool-btn")
@@ -206,9 +233,11 @@ class StudyReaderView(QWidget):
         header_layout.addStretch()
         header_layout.addWidget(self.lbl_header_timer)
         header_layout.addSpacing(10)
+        header_layout.addWidget(self.btn_focus_mode)
+        header_layout.addSpacing(10)
         header_layout.addWidget(self.btn_toggle_right)
 
-        outer_layout.addWidget(header_widget)
+        outer_layout.addWidget(self.header_widget)
 
         # 2. ÁREA CENTRAL
         main_layout = QHBoxLayout()
@@ -240,8 +269,8 @@ class StudyReaderView(QWidget):
         pdf_container_layout.addWidget(self.scroll_area, stretch=1)
 
         # BARRA INFERIOR UNIFICADA
-        bottom_bar = QFrame()
-        bottom_bar.setStyleSheet("""
+        self.bottom_bar = QFrame()
+        self.bottom_bar.setStyleSheet("""
             QFrame {
                 background-color: #1E1E2E;
                 border: 1px solid #313244;
@@ -250,7 +279,7 @@ class StudyReaderView(QWidget):
             }
             QLabel { border: none; font-size: 12px; }
         """)
-        bottom_layout = QHBoxLayout(bottom_bar)
+        bottom_layout = QHBoxLayout(self.bottom_bar)
         bottom_layout.setContentsMargins(8, 4, 8, 4)
         bottom_layout.setSpacing(6)
 
@@ -325,7 +354,7 @@ class StudyReaderView(QWidget):
         self.btn_undo_highlight.clicked.connect(self.undo_last_highlight)
         bottom_layout.addWidget(self.btn_undo_highlight)
 
-        pdf_container_layout.addWidget(bottom_bar)
+        pdf_container_layout.addWidget(self.bottom_bar)
         main_layout.addWidget(pdf_container_widget, stretch=4)
 
         # 3. PAINEL DIREITO
@@ -369,7 +398,7 @@ class StudyReaderView(QWidget):
         """)
         sidebar_layout.addWidget(self.block_progress)
 
-        # Cronômetro Card
+        # Cronômetro / Pomodoro Card
         timer_frame = QFrame()
         timer_frame.setStyleSheet("background-color: #181825; border: 1px solid #313244; border-radius: 8px; padding: 10px;")
         timer_layout = QVBoxLayout(timer_frame)
@@ -379,6 +408,27 @@ class StudyReaderView(QWidget):
         lbl_timer_title.setStyleSheet("color: #A6ADC8; font-size: 11px; font-weight: bold;")
         lbl_timer_title.setAlignment(Qt.AlignCenter)
         timer_layout.addWidget(lbl_timer_title)
+
+        # Seletor de Modo (Cronômetro / Pomodoro)
+        self.cmb_timer_mode = QComboBox()
+        self.cmb_timer_mode.addItems(["⏱️ Cronômetro Livre", "🍅 Modo Pomodoro (25m)"])
+        self.cmb_timer_mode.setStyleSheet("""
+            QComboBox {
+                background-color: #1E1E2E;
+                color: #CDD6F4;
+                border: 1px solid #313244;
+                border-radius: 5px;
+                padding: 4px;
+                font-size: 12px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #181825;
+                color: #CDD6F4;
+                selection-background-color: #313244;
+            }
+        """)
+        self.cmb_timer_mode.currentIndexChanged.connect(self.on_timer_mode_changed)
+        timer_layout.addWidget(self.cmb_timer_mode)
 
         self.lbl_timer = QLabel("00:00:00")
         self.lbl_timer.setStyleSheet("font-size: 26px; font-weight: bold; color: #A6E3A1; border: none;")
@@ -405,7 +455,7 @@ class StudyReaderView(QWidget):
 
         timer_layout.addLayout(btn_timer_layout)
 
-        self.btn_reset_timer = QPushButton("⏹ Descartar Tempo")
+        self.btn_reset_timer = QPushButton("⏹ Reiniciar Timer")
         self.btn_reset_timer.setStyleSheet("""
             QPushButton { background-color: transparent; color: #F38BA8; border: none; font-size: 11px; margin-top: 4px; }
             QPushButton:hover { text-decoration: underline; }
@@ -474,6 +524,160 @@ class StudyReaderView(QWidget):
         main_layout.addWidget(self.sidebar, stretch=0)
         outer_layout.addLayout(main_layout)
 
+    # --- LÓGICA DE GERENCIAMENTO DE TIMER E POMODORO ---
+    def on_timer_mode_changed(self, index):
+        self.pause_timer()
+        
+        if index == 0:
+            self.timer_mode = "STOPWATCH"
+            self.lbl_timer.setStyleSheet("font-size: 26px; font-weight: bold; color: #A6E3A1; border: none;")
+        else:
+            self.timer_mode = "POMODORO"
+            self.pomodoro_state = "WORK"
+            self.pomodoro_remaining = self.work_duration
+            self.lbl_timer.setStyleSheet("font-size: 26px; font-weight: bold; color: #89B4FA; border: none;")
+            
+        self.refresh_timer_display()
+
+    def start_timer(self):
+        if not self.timer.isActive():
+            self.timer.start(1000)
+
+        if self.block_id:
+            db = SessionLocal()
+            try:
+                block = db.query(StudyBlock).filter(StudyBlock.id == self.block_id).first()
+                if block and block.status == BlockStatus.PENDENTE:
+                    block.status = BlockStatus.EM_ANDAMENTO
+                    self.block_status = BlockStatus.EM_ANDAMENTO
+                    if not block.started_at:
+                        block.started_at = datetime.now(timezone.utc)
+                    db.commit()
+            except Exception as e:
+                db.rollback()
+                print(f"Erro ao iniciar bloco: {e}")
+            finally:
+                db.close()
+
+    def update_timer(self):
+        if self.timer_mode == "STOPWATCH":
+            self.elapsed_seconds += 1
+            self.refresh_timer_display()
+            
+        elif self.timer_mode == "POMODORO":
+            if self.pomodoro_remaining > 0:
+                self.pomodoro_remaining -= 1
+                
+                # Apenas acumula tempo de estudo REAL no banco se estiver na fase de foco
+                if self.pomodoro_state == "WORK":
+                    self.elapsed_seconds += 1
+                    
+                self.refresh_timer_display()
+            else:
+                self.handle_pomodoro_completion()
+
+    def refresh_timer_display(self):
+        if self.timer_mode == "STOPWATCH":
+            time_str = QTime(0, 0, 0).addSecs(self.elapsed_seconds).toString("hh:mm:ss")
+            self.lbl_timer.setText(time_str)
+            if hasattr(self, 'lbl_header_timer'):
+                self.lbl_header_timer.setText(f"⏱️ {time_str}")
+                
+        elif self.timer_mode == "POMODORO":
+            time_str = QTime(0, 0, 0).addSecs(self.pomodoro_remaining).toString("mm:ss")
+            icon = "🍅" if self.pomodoro_state == "WORK" else "☕"
+            
+            self.lbl_timer.setText(time_str)
+            if hasattr(self, 'lbl_header_timer'):
+                self.lbl_header_timer.setText(f"{icon} {time_str}")
+
+    def handle_pomodoro_completion(self):
+        self.timer.stop()
+        
+        if self.alarm_sound.source().isValid():
+            self.alarm_sound.play()
+
+        if self.pomodoro_state == "WORK":
+            self.pomodoros_completed += 1
+            if self.pomodoros_completed % 4 == 0:
+                self.pomodoro_state = "LONG_BREAK"
+                self.pomodoro_remaining = self.long_break
+                msg = "<b>Hora de uma Pausa Longa! 🎉</b><br>Você concluiu 4 ciclos de foco. Relaxe 15 minutos."
+            else:
+                self.pomodoro_state = "BREAK"
+                self.pomodoro_remaining = self.short_break
+                msg = "<b>Hora do Descanso! ☕</b><br>Pausa curta de 5 minutos. Levante e tome uma água."
+                
+            self.lbl_timer.setStyleSheet("font-size: 26px; font-weight: bold; color: #F8BD96; border: none;")
+        else:
+            self.pomodoro_state = "WORK"
+            self.pomodoro_remaining = self.work_duration
+            msg = "<b>Pausa encerrada! 💪</b><br>Pronto para voltar ao foco?"
+            self.lbl_timer.setStyleSheet("font-size: 26px; font-weight: bold; color: #89B4FA; border: none;")
+
+        self.refresh_timer_display()
+        QMessageBox.information(self, "Pomodoro", msg)
+        self.timer.start(1000)
+
+    def pause_timer(self):
+        self.timer.stop()
+
+    def reset_timer(self, confirm=True):
+        if confirm:
+            reply = QMessageBox.question(
+                self, 
+                "Reiniciar Timer", 
+                "Deseja reiniciar a contagem atual?",
+                QMessageBox.Yes | QMessageBox.No, 
+                QMessageBox.No
+            )
+            if reply != QMessageBox.Yes:
+                return
+
+        self.timer.stop()
+        if self.timer_mode == "STOPWATCH":
+            self.elapsed_seconds = 0
+        else:
+            self.pomodoro_state = "WORK"
+            self.pomodoro_remaining = self.work_duration
+            self.lbl_timer.setStyleSheet("font-size: 26px; font-weight: bold; color: #89B4FA; border: none;")
+            
+        self.refresh_timer_display()
+
+    # --- NAVEGAÇÃO E MODOS DA INTERFACE ---
+    def toggle_focus_mode(self):
+        top_window = self.window()
+        if self.is_focus_mode:
+            self.exit_focus_mode()
+        else:
+            self.is_focus_mode = True
+            if top_window:
+                top_window.showFullScreen()
+            
+            self.header_widget.setVisible(False)
+            self.sidebar.setVisible(False)
+            self.bottom_bar.setVisible(False)
+            
+            if self.auto_fit_width:
+                self.render_page()
+
+    def exit_focus_mode(self):
+        if not self.is_focus_mode:
+            return
+
+        self.is_focus_mode = False
+        top_window = self.window()
+        if top_window:
+            top_window.showNormal()
+
+        self.header_widget.setVisible(True)
+        self.sidebar.setVisible(True)
+        self.bottom_bar.setVisible(True)
+        self.lbl_header_timer.setVisible(False)
+
+        if self.auto_fit_width:
+            self.render_page()
+
     def toggle_dark_mode(self):
         self.dark_mode = self.btn_dark_mode.isChecked()
         self.render_page()
@@ -503,7 +707,6 @@ class StudyReaderView(QWidget):
             is_visible = not self.sidebar.isVisible()
             self.sidebar.setVisible(is_visible)
             
-            # Mostra o timer no topo se o painel lateral estiver ocultado
             if hasattr(self, 'lbl_header_timer'):
                 self.lbl_header_timer.setVisible(not is_visible)
 
@@ -747,6 +950,9 @@ class StudyReaderView(QWidget):
         if not self.doc or self.current_page < 0 or self.current_page >= self.total_pages:
             return
 
+        v_scroll = self.scroll_area.verticalScrollBar().value()
+        h_scroll = self.scroll_area.horizontalScrollBar().value()
+
         page = self.doc.load_page(self.current_page)
         
         annot = page.first_annot
@@ -796,9 +1002,8 @@ class StudyReaderView(QWidget):
         pixmap = QPixmap.fromImage(qimg)
         self.lbl_pdf_page.setPixmap(pixmap)
         
-        # Reseta a rolagem vertical/horizontal para o topo ao renderizar
-        self.scroll_area.verticalScrollBar().setValue(0)
-        self.scroll_area.horizontalScrollBar().setValue(0)
+        self.scroll_area.verticalScrollBar().setValue(v_scroll)
+        self.scroll_area.horizontalScrollBar().setValue(h_scroll)
         
         self.lbl_page_info.setText(f"Pág: {self.current_page + 1} / {self.total_pages}")
         self.load_current_page_notes()
@@ -812,6 +1017,7 @@ class StudyReaderView(QWidget):
             self.block_progress.setValue(max(0, pct))
     
     def closeEvent(self, event):
+        self.exit_focus_mode()
         self.save_and_pause()
         self.unload_pdf()
         super().closeEvent(event)
@@ -908,6 +1114,7 @@ class StudyReaderView(QWidget):
             self.save_notes()
             self.current_page -= 1
             self.render_page()
+            self.scroll_area.verticalScrollBar().setValue(0)
             self.save_current_page()
 
     def next_page(self):
@@ -915,6 +1122,7 @@ class StudyReaderView(QWidget):
             self.save_notes()
             self.current_page += 1
             self.render_page()
+            self.scroll_area.verticalScrollBar().setValue(0)
             self.save_current_page()
             self.check_block_completion()
 
@@ -997,7 +1205,6 @@ class StudyReaderView(QWidget):
                 db.commit()
                 db.close()
 
-                # Recarrega utilizando a lógica normal do bloco
                 self.load_block(next_id)
             else:
                 db.close()
@@ -1013,55 +1220,8 @@ class StudyReaderView(QWidget):
                 db.close()
             QMessageBox.critical(self, "Erro", f"Erro ao avançar bloco: {str(e)}")
 
-    def start_timer(self):
-        if not self.timer.isActive():
-            self.timer.start(1000)
-
-        if self.block_id:
-            db = SessionLocal()
-            try:
-                block = db.query(StudyBlock).filter(StudyBlock.id == self.block_id).first()
-                if block and block.status == BlockStatus.PENDENTE:
-                    block.status = BlockStatus.EM_ANDAMENTO
-                    self.block_status = BlockStatus.EM_ANDAMENTO
-                    if not block.started_at:
-                        block.started_at = datetime.now(timezone.utc)
-                    db.commit()
-            except Exception as e:
-                db.rollback()
-                print(f"Erro ao iniciar bloco: {e}")
-            finally:
-                db.close()
-
-    def update_timer(self):
-        self.elapsed_seconds += 1
-        time_str = QTime(0, 0, 0).addSecs(self.elapsed_seconds).toString("hh:mm:ss")
-        self.lbl_timer.setText(time_str)
-        if hasattr(self, 'lbl_header_timer'):
-            self.lbl_header_timer.setText(f"⏱️ {time_str}")
-
-    def pause_timer(self):
-        self.timer.stop()
-
-    def reset_timer(self, confirm=True):
-        if confirm:
-            reply = QMessageBox.question(
-                self, 
-                "Descartar Tempo", 
-                "Deseja resetar o cronômetro para zero e descartar o tempo desta sessão?",
-                QMessageBox.Yes | QMessageBox.No, 
-                QMessageBox.No
-            )
-            if reply != QMessageBox.Yes:
-                return
-
-        self.timer.stop()
-        self.elapsed_seconds = 0
-        self.lbl_timer.setText("00:00:00")
-        if hasattr(self, 'lbl_header_timer'):
-            self.lbl_header_timer.setText("⏱️ 00:00:00")
-
     def save_and_pause(self):
+        self.exit_focus_mode()
         self.pause_timer()
         self.save_current_page()
         self.save_notes()
@@ -1088,6 +1248,7 @@ class StudyReaderView(QWidget):
         self.back_requested.emit()
 
     def complete_block(self):
+        self.exit_focus_mode()
         self.pause_timer()
         self.save_current_page()
         self.save_notes()

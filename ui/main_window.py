@@ -25,6 +25,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("EstudoFlow - Organização de Estudos")
         self.resize(1100, 720)
+        self.is_returning_to_import = False
 
         self.import_queue = []
         self.current_import_subject_id = None
@@ -149,6 +150,8 @@ class MainWindow(QMainWindow):
         self.reader_view.back_requested.connect(self.on_reader_back)
         self.reader_view.block_completed.connect(self.dash_view.refresh)
 
+        self.toc_review_view = None
+
         if hasattr(self.reader_view, 'toggle_left_sidebar_requested'):
             self.reader_view.toggle_left_sidebar_requested.connect(self.toggle_left_sidebar)
 
@@ -167,6 +170,28 @@ class MainWindow(QMainWindow):
         
         self.switch_view(0)
 
+    def show_toc_review(self, file_path: str, subject_id: int, detected_topics: list, current_index: int = 1, total_files: int = 1):
+        """Cria a tela de revisão dinamicamente com os dados do PDF atual."""
+        self.toc_review_view = TOCReviewView(file_path, subject_id, detected_topics)
+        self.toc_review_view.set_progress_info(current_index, total_files)
+
+        # Conexão dos sinais
+        self.toc_review_view.completed.connect(self.process_next_pdf_in_queue)
+        self.toc_review_view.back_requested.connect(self.show_pdf_import_view) # 👈 Conecta o botão de voltar
+
+        # Adiciona e exibe no self.stack (nome correto no seu código)
+        self.stack.addWidget(self.toc_review_view)
+        self.stack.setCurrentWidget(self.toc_review_view)
+
+    def show_pdf_import_view(self):
+        """Retorna para a tela de seleção/importação preservando os arquivos."""
+        self.import_queue.clear()
+        
+        # Marca que estamos voltando intencionalmente da revisão
+        self.is_returning_to_import = True
+        
+        # Alterna para a aba de importação (Index 4)
+        self.switch_view(4)
     
     def on_reader_back(self):
         self.dash_view.refresh()  # Correção: chama self.dash_view
@@ -263,9 +288,15 @@ class MainWindow(QMainWindow):
         elif index == 3:  # 👈 4. Recarrega as matérias e questões ao abrir o Caderno de Erros
             self.errors_view.load_combos()
             self.errors_view.load_errors()
-            
-        self.stack.setCurrentIndex(index)
+        elif index == 4:
+            # 👈 LÓGICA DE LIMPEZA DA IMPORTAÇÃO:
+            # Se clicou na aba do menu (e não foi pelo botão 'Voltar'), limpa a lista!
+            if not self.is_returning_to_import:
+                self.import_view.clear_all_files()
+            # Reseta a flag para as próximas navegações
+            self.is_returning_to_import = False
 
+        self.stack.setCurrentIndex(index)
     def handle_app_reset(self):
         if hasattr(self, 'reader_view'):
             self.reader_view.unload_pdf()
@@ -284,6 +315,7 @@ class MainWindow(QMainWindow):
                 "Importação Concluída", 
                 f"Todos os {self.total_imports} PDF(s) foram processados e importados com sucesso!"
             )
+            self.import_view.clear_all_files()
             self.switch_view(0)
             return
 
@@ -306,7 +338,9 @@ class MainWindow(QMainWindow):
         
         self.stack.addWidget(review_view)
         self.stack.setCurrentWidget(review_view)
+        self.show_toc_review(file_path, self.current_import_subject_id, topics, current_index, self.total_imports)
 
     def open_study_session(self, block_id: int):
         self.reader_view.load_block(block_id)
+        self.sidebar_widget.setVisible(False)
         self.switch_view(2)
