@@ -31,6 +31,12 @@ class MainWindow(QMainWindow):
         self.total_imports = 0
 
         main_widget = QWidget()
+        main_widget.setStyleSheet(""" 
+            QWidget#MainWidget{
+                background-color: #1E1E2E;
+            }    
+        """)
+
         self.setCentralWidget(main_widget)
         layout = QHBoxLayout(main_widget)
         layout.setContentsMargins(0, 0, 0, 0)
