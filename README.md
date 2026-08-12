@@ -7,6 +7,16 @@
 ![Database](https://img.shields.io/badge/Database-SQLite%20%2F%20SQLAlchemy-red)
 ![License](https://img.shields.io/badge/License-MIT-yellow)
 
+# 🎯 FocusFlow
+
+> Um aplicativo desktop moderno, modular e inteligente para gerenciamento de ciclos de estudos e leitura ativa de PDFs.
+
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
+[![PySide6](https://img.shields.io/badge/GUI-PySide6%20%2F%20Qt6-green.svg)](https://pyside.org/)
+[![Database](https://img.shields.io/badge/Database-SQLite%20%2F%20SQLAlchemy-orange.svg)](https://www.sqlalchemy.org/)
+[![License](https://img.shields.io/badge/License-MIT-brightgreen.svg)](LICENSE)
+
+
 ---
 
 ## 📌 Sobre o Projeto

@@ -1,0 +1,27 @@
+# Python & Ambiente Virtual
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+ENV/
+
+# Banco de Dados Local e Backups
+*.db
+*.sqlite3
+*.zip
+*.log
+
+# Arquivos temporários e anexos de teste (PDFs)
+*.pdf
+/storage/
+/data/
+
+# Configurações de IDE / Sistema Operacional
+.vscode/
+.idea/
+.DS_Store
+
+export_code.py
+generate_bell_sound.py
+generate_icon.py
