@@ -24,6 +24,8 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle(f"{config.APP_NAME} - v{config.APP_VERSION}")
+        self.setMinimumSize(1024, 600)
+        self.showMaximized()
         self.resize(1100, 720)
         self.is_returning_to_import = False
 
