@@ -1,0 +1,70 @@
+name: Build and Release FocusFlow
+
+on:
+  push:
+    tags:
+      - 'v*' # Dispara o workflow quando você envia uma tag como v1.0.0
+
+jobs:
+  build:
+    name: Build Executable (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            asset_name: FocusFlow-Linux
+            exe_path: dist/FocusFlow
+          - os: windows-latest
+            asset_name: FocusFlow-Windows.exe
+            exe_path: dist/FocusFlow.exe
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11' # Use a versão do Python do seu ambiente
+
+      # No Linux, o PySide6/Qt precisa de bibliotecas gráficas do sistema
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxcb-cursor0 libxcb-xinerama0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 libxcb-render-util0 libxcb-shape0
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install pyinstaller
+          # Se você tiver um requirements.txt, descomente a linha abaixo:
+          # pip install -r requirements.txt
+          # Caso contrário, instale as libs do projeto:
+          pip install PySide6 pymupdf sqlalchemy
+
+      - name: Build executable with PyInstaller
+        run: |
+          # Ajuste 'main.py' para o arquivo de entrada do seu app
+          pyinstaller --noconfirm --onedir --windowed --name="FocusFlow" main.py
+
+      # Compacta os arquivos gerados antes de disponibilizar para download
+      - name: Zip build artifact (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          powershell Compress-Archive -Path dist/FocusFlow/* -DestinationPath dist/FocusFlow-Windows.zip
+
+      - name: Tar build artifact (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          tar -czvf dist/FocusFlow-Linux.tar.gz -C dist/FocusFlow .
+
+      - name: Upload artifacts to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/FocusFlow-Windows.zip
+            dist/FocusFlow-Linux.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
