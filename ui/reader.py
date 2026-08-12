@@ -14,6 +14,7 @@ from services.study_manager import StudyManager
 
 from PySide6.QtWidgets import QDialog, QSpinBox, QFormLayout, QDialogButtonBox, QTreeWidget, QTreeWidgetItem
 
+
 class PomodoroSettingsDialog(QDialog):
     def __init__(self, work_min=25, short_min=5, long_min=15, parent=None):
         super().__init__(parent)
@@ -92,6 +93,7 @@ class PomodoroSettingsDialog(QDialog):
         """Retorna os valores selecionados em minutos."""
         return self.sb_work.value(), self.sb_short.value(), self.sb_long.value()
 
+
 class PDFSelectableLabel(QLabel):
     area_selected = Signal(QRect)
     point_clicked = Signal(QPoint)
@@ -146,6 +148,7 @@ class PDFSelectableLabel(QLabel):
             painter.setBrush(fill_color)
             painter.drawRect(rect)
 
+
 class PDFOutlineTreeWidget(QTreeWidget):
     page_requested = Signal(int)  # Emite o número da página (base 1)
 
@@ -176,22 +179,70 @@ class PDFOutlineTreeWidget(QTreeWidget):
         """)
         self.itemClicked.connect(self.on_item_clicked)
 
+    def load_db_topics(self, topics_list):
+        """
+        Carrega na árvore os tópicos cadastrados no Banco de Dados (criados via TOCReviewView).
+        `topics_list` deve ser uma lista de objetos Topic ou dicionários com 'title' e 'page_start'.
+        """
+        self.clear()
+
+        if not topics_list:
+            item = QTreeWidgetItem(self, ["Nenhum tópico cadastrado"])
+            item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
+            return
+
+        for t in topics_list:
+            title = getattr(t, 'title', t.get('title', 'Tópico sem título') if isinstance(t, dict) else 'Tópico sem título')
+            page = getattr(t, 'page_start', t.get('page_start', 1) if isinstance(t, dict) else 1)
+
+            tree_item = QTreeWidgetItem(self, [f"📌 {title} (p. {page})"])
+            tree_item.setData(0, Qt.UserRole, page)
+
+        self.expandToDepth(0)
+
     def load_toc(self, toc_list):
         """
         Recebe a lista TOC no formato PyMuPDF: [[level, title, page], ...]
+        Garante parsing seguro e reconstrução hierárquica completa dos tópicos.
         """
         self.clear()
-        if not toc_list:
+        
+        valid_toc = []
+        if toc_list:
+            for item in toc_list:
+                if isinstance(item, (list, tuple)) and len(item) >= 2:
+                    level = item[0]
+                    title = item[1]
+                    page = item[2] if len(item) > 2 and item[2] is not None else 1
+                    valid_toc.append([level, title, page])
+
+        if not valid_toc:
             item = QTreeWidgetItem(self, ["Nenhum sumário disponível"])
             item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
             return
 
         parents = {0: self}
-        for level, title, page in toc_list:
-            parent = parents.get(level - 1, self)
-            item = QTreeWidgetItem(parent, [f"{title} (p. {page})"])
-            item.setData(0, Qt.UserRole, page)
-            parents[level] = item
+
+        for item_data in valid_toc:
+            try:
+                level = int(item_data[0])
+                title = str(item_data[1]).strip() or "Tópico sem título"
+                raw_page = item_data[2]
+                page = 1 if raw_page is None else int(raw_page)
+            except (ValueError, TypeError, IndexError):
+                continue
+
+            page = max(1, page)
+
+            target_level = level - 1
+            while target_level > 0 and target_level not in parents:
+                target_level -= 1
+
+            parent = parents.get(target_level, self)
+
+            tree_item = QTreeWidgetItem(parent, [f"{title} (p. {page})"])
+            tree_item.setData(0, Qt.UserRole, page)
+            parents[level] = tree_item
 
         self.expandToDepth(0)
 
@@ -216,7 +267,7 @@ class StudyReaderView(QWidget):
         self.zoom_factor = 1.0
         self.auto_fit_width = True
         self.dark_mode = False
-        self.is_focus_mode = False  # Estado do Modo Foco Total
+        self.is_focus_mode = False
         
         self.selected_color = "#FFFF00"
         self.color_buttons = {}
@@ -229,14 +280,14 @@ class StudyReaderView(QWidget):
         # --- CONFIGURAÇÃO DO TIMER / POMODORO ---
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.update_timer)
-        self.elapsed_seconds = 0  # Segundos reais acumulados de estudo (salvos no BD)
+        self.elapsed_seconds = 0
 
         # Estados do Modo
-        self.timer_mode = "STOPWATCH"  # "STOPWATCH" ou "POMODORO"
-        self.work_duration = 25 * 60     # 25 minutos
-        self.short_break = 5 * 60        # 5 minutos
-        self.long_break = 15 * 60       # 15 minutos
-        self.pomodoro_state = "WORK"     # "WORK", "BREAK", "LONG_BREAK"
+        self.timer_mode = "STOPWATCH"
+        self.work_duration = 25 * 60
+        self.short_break = 5 * 60
+        self.long_break = 15 * 60
+        self.pomodoro_state = "WORK"
         self.pomodoro_remaining = self.work_duration
         self.pomodoros_completed = 0
 
@@ -258,7 +309,6 @@ class StudyReaderView(QWidget):
         QShortcut(QKeySequence("Ctrl+-"), self, self.zoom_out)
         QShortcut(QKeySequence("Ctrl+D"), self, lambda: self.btn_dark_mode.animateClick())
 
-        # Atalhos para Modo Foco (F11 para alternar, Esc para sair)
         QShortcut(QKeySequence("F11"), self, self.toggle_focus_mode)
         QShortcut(QKeySequence("Escape"), self, self.exit_focus_mode)
 
@@ -334,7 +384,6 @@ class StudyReaderView(QWidget):
         self.lbl_header_title = QLabel("Leitor de Estudos")
         self.lbl_header_title.setStyleSheet("font-weight: bold; font-size: 15px; color: #89B4FA; border: none;")
 
-        # Timer compacto do topo (visível quando a barra de anotações estiver oculta)
         self.lbl_header_timer = QLabel("⏱️ 00:00:00")
         self.lbl_header_timer.setStyleSheet("""
             font-size: 14px; 
@@ -348,7 +397,6 @@ class StudyReaderView(QWidget):
         self.lbl_header_timer.setToolTip("Tempo Dedicado / Pomodoro")
         self.lbl_header_timer.setVisible(False)
 
-        # Botão Modo Foco Total (F11)
         self.btn_focus_mode = QPushButton("🖥️ Foco")
         self.btn_focus_mode.setProperty("class", "tool-btn")
         self.btn_focus_mode.setToolTip("Modo Foco Total (Atalho: F11)")
@@ -380,7 +428,7 @@ class StudyReaderView(QWidget):
         # === PAINEL LATERAL ESQUERDO (SUMÁRIO / TOC) ===
         self.left_sidebar = QFrame()
         self.left_sidebar.setFixedWidth(240)
-        self.left_sidebar.setVisible(False)  # Inicia oculta por padrão
+        self.left_sidebar.setVisible(False)
         self.left_sidebar.setStyleSheet("""
             QFrame#LeftSidebar {
                 background-color: #1E1E2E;
@@ -401,14 +449,12 @@ class StudyReaderView(QWidget):
         self.toc_tree.page_requested.connect(self.go_to_page_from_toc)
         left_sidebar_layout.addWidget(self.toc_tree)
 
-        # Adiciona a barra da esquerda no layout principal
         main_layout.addWidget(self.left_sidebar, stretch=0)
 
         pdf_container_widget = QWidget()
         pdf_container_layout = QVBoxLayout(pdf_container_widget)
         pdf_container_layout.setContentsMargins(12, 12, 12, 12)
         pdf_container_layout.setSpacing(8)
-        
 
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
@@ -570,7 +616,7 @@ class StudyReaderView(QWidget):
         lbl_timer_title.setAlignment(Qt.AlignCenter)
         timer_layout.addWidget(lbl_timer_title)
 
-        # Seletor de Modo (Cronômetro / Pomodoro)
+        # Seletor de Modo
         mode_layout = QHBoxLayout()
         mode_layout.setSpacing(6)
 
@@ -594,7 +640,6 @@ class StudyReaderView(QWidget):
         self.cmb_timer_mode.currentIndexChanged.connect(self.on_timer_mode_changed)
         mode_layout.addWidget(self.cmb_timer_mode, stretch=1)
 
-        # Botão para abrir o Modal
         self.btn_pomodoro_settings = QPushButton("⚙️")
         self.btn_pomodoro_settings.setFixedSize(28, 28)
         self.btn_pomodoro_settings.setToolTip("Configurar tempos do Pomodoro")
@@ -714,14 +759,14 @@ class StudyReaderView(QWidget):
             self.left_sidebar.setVisible(is_visible)
 
     def go_to_page_from_toc(self, page_num_1based: int):
-        """Navega para a página clicada no Sumário."""
+        """Navega para a página clicada no Sumário ignorando a auto-conclusão do bloco."""
         if 1 <= page_num_1based <= self.total_pages:
             self.save_notes()
             self.current_page = page_num_1based - 1
             self.render_page()
             self.scroll_area.verticalScrollBar().setValue(0)
             self.save_current_page()
-            self.check_block_completion()
+            self.check_block_completion(from_toc=True)
 
     def open_pomodoro_settings(self):
         work_min = int(self.work_duration / 60)
@@ -732,17 +777,14 @@ class StudyReaderView(QWidget):
         if dialog.exec() == QDialog.Accepted:
             new_work, new_short, new_long = dialog.get_values()
             
-            # Atualiza os valores em segundos
             self.work_duration = new_work * 60
             self.short_break = new_short * 60
             self.long_break = new_long * 60
 
-            # Atualiza o texto do item no ComboBox sem disparar o evento de mudança
             self.cmb_timer_mode.blockSignals(True)
             self.cmb_timer_mode.setItemText(1, f"🍅 Pomodoro ({new_work}m)")
             self.cmb_timer_mode.blockSignals(False)
 
-            # Se o modo atual for Pomodoro e o temporizador estiver parado, atualiza a contagem
             if self.timer_mode == "POMODORO" and not self.timer.isActive():
                 if self.pomodoro_state == "WORK":
                     self.pomodoro_remaining = self.work_duration
@@ -803,7 +845,6 @@ class StudyReaderView(QWidget):
             if self.pomodoro_remaining > 0:
                 self.pomodoro_remaining -= 1
                 
-                # Apenas acumula tempo de estudo REAL no banco se estiver na fase de foco
                 if self.pomodoro_state == "WORK":
                     self.elapsed_seconds += 1
                     
@@ -1073,25 +1114,11 @@ class StudyReaderView(QWidget):
         self.lbl_info.setText("<b>Nenhum bloco selecionado</b>")
         self.lbl_header_title.setText("Leitor de Estudos")
         
-        # --- LIMPEZA E OCULTAÇÃO DO SUMÁRIO (TOC) ---
         if hasattr(self, 'toc_tree'):
             self.toc_tree.clear()
         if hasattr(self, 'left_sidebar'):
             self.left_sidebar.setVisible(False)
 
-        self.txt_notes.blockSignals(True)
-        self.txt_notes.clear()
-        self.txt_notes.blockSignals(False)
-
-        self.current_pdf_id = None
-        self.block_id = None
-        self.current_page = 0
-        self.total_pages = 0
-        self.lbl_pdf_page.setText("Nenhum PDF carregado.")
-        self.lbl_page_info.setText("Pág: 0 / 0")
-        self.lbl_info.setText("<b>Nenhum bloco selecionado</b>")
-        self.lbl_header_title.setText("Leitor de Estudos")
-        
         self.txt_notes.blockSignals(True)
         self.txt_notes.clear()
         self.txt_notes.blockSignals(False)
@@ -1136,11 +1163,27 @@ class StudyReaderView(QWidget):
                 self.doc = fitz.open(pdf_doc.file_path)
                 self.total_pages = len(self.doc)
 
-                # --- CARREGA O SUMÁRIO DO PDF ---
-                toc = self.doc.get_toc()  # Retorna [[level, title, page], ...]
+                db_topics = (
+                    db.query(Topic)
+                    .filter(Topic.pdf_id == pdf_doc.id)
+                    .order_by(Topic.order.asc(), Topic.page_start.asc())
+                    .all()
+                )
+
                 if hasattr(self, 'toc_tree'):
-                    self.toc_tree.load_toc(toc)
-                
+                    if db_topics:
+                        self.toc_tree.load_db_topics(db_topics)
+                        if hasattr(self, 'left_sidebar'):
+                            self.left_sidebar.setVisible(True)
+                    else:
+                        toc = self.doc.get_toc(simple=False) if hasattr(self.doc, 'get_toc') else []
+                        if not toc and hasattr(self.doc, 'get_toc'):
+                            toc = self.doc.get_toc()
+
+                        self.toc_tree.load_toc(toc)
+                        if toc and hasattr(self, 'left_sidebar'):
+                            self.left_sidebar.setVisible(True)
+
                 saved_page = block.current_page if (block.current_page and block.current_page > 0) else self.page_start
                 self.current_page = max(0, saved_page - 1)
                 
@@ -1385,7 +1428,14 @@ class StudyReaderView(QWidget):
             self.save_current_page()
             self.check_block_completion()
 
-    def check_block_completion(self):
+    def check_block_completion(self, from_toc=False):
+        """
+        Verifica se a página atual ultrapassou a meta do bloco.
+        Se a navegação veio do sumário (from_toc=True), a verificação é ignorada.
+        """
+        if from_toc:
+            return
+
         current_page_1based = self.current_page + 1
         
         if current_page_1based > self.page_end and self.block_status != BlockStatus.CONCLUIDO:
@@ -1441,7 +1491,6 @@ class StudyReaderView(QWidget):
     def load_next_sequential_block(self):
         db = SessionLocal()
         try:
-            # Pede ao StudyManager a próxima matéria/bloco recomendado no ciclo
             next_block = StudyManager.get_next_block_to_study(db)
 
             if next_block:
@@ -1453,7 +1502,6 @@ class StudyReaderView(QWidget):
                 db.commit()
                 db.close()
 
-                # Carrega o próximo bloco recomendado (seja do mesmo PDF ou de outra matéria)
                 self.load_block(next_id)
             else:
                 db.close()

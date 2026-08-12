@@ -1,108 +1,115 @@
-# 📚 FocusFlow
+# 🎯 FocusFlow
 
-> Um gerenciador de estudos desktop moderno, focado em ciclos de estudo, leitura de PDFs, anotações e Caderno de Erros.
+> Um aplicativo desktop moderno, modular e inteligente para gerenciamento de ciclos de estudos e leitura ativa de PDFs.
 
-![Python](https://img.shields.io/badge/Python-3.10%2B-blue?logo=python)
-![PySide6](https://img.shields.io/badge/UI-PySide6%20%2F%20Qt6-green?logo=qt)
-![Database](https://img.shields.io/badge/Database-SQLite%20%2F%20SQLAlchemy-red)
-![License](https://img.shields.io/badge/License-MIT-yellow)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
+[![PySide6](https://img.shields.io/badge/GUI-PySide6%20%2F%20Qt6-green.svg)](https://pyside.org/)
+[![Database](https://img.shields.io/badge/Database-SQLite%20%2F%20SQLAlchemy-orange.svg)](https://www.sqlalchemy.org/)
+[![License](https://img.shields.io/badge/License-MIT-brightgreen.svg)](LICENSE)
 
 ---
 
 ## 📌 Sobre o Projeto
 
-O **FocusFlow** foi desenvolvido para centralizar toda a rotina de estudos de concursos, vestibulares e graduação em um único aplicativo desktop local, rápido e sem distrações. 
-
-Ele elimina a necessidade de usar planilhas complexas, leitores de PDF genéricos e apps de notas separados, integrando tudo num fluxo de trabalho otimizado.
+O **FocusFlow** foi projetado para estudantes, concurseiros e pesquisadores que buscam maximizar o rendimento nos estudos. Unindo um **algoritmo de rotação de matérias** a um **leitor de PDF integrado com ferramentas de estudo ativo**, o aplicativo automatiza o planejamento e elimina a fadiga de ter que decidir "o que estudar agora".
 
 ---
 
 ## ✨ Principais Funcionalidades
 
-### 🔄 1. Ciclo de Estudos e Matérias
-- Organização de matérias com pesos, horas recomendadas e progresso visual.
-- Geração automática e dinâmica do ciclo de estudos.
+### 🔄 Ciclo Inteligente de Estudos
+- **Algoritmo de Rotação Automática:** Seleciona o próximo bloco/matéria com base em pendências, menor contagem de blocos concluídos e alternância de temas para evitar fadiga cognitiva[cite: 1].
+- **Cronômetro e Pomodoro Integrados:** Controle preciso de tempo gasto por bloco de estudo.
 
-### 📖 2. Leitor de PDF Integrado & Mapeador de Sumário
-- Leitor de PDF com suporte a grifos e criação de anotações por página.
-- **Detecção Inteligente de Índice/Sumário (TOC):** Mapeia tópicos e capítulos do PDF automaticamente.
+### 📚 Leitor de PDF Integrado & Extração Automática (TOC)
+- **Detecção Inteligente de Sumários (3 Camadas):** Leitura de bookmarks nativos, parsing via Expressões Regulares (Regex) e fallback automático para blocos padronizados[cite: 1].
+- **Estudo Ativo:** Suporte a *highlights* (grifos de texto sem duplicação gráfica) e anotações vinculadas diretamente às coordenadas das páginas[cite: 1].
 
-### ❌ 3. Caderno de Erros (Question Error Notebook)
-- Registro detalhado de questões incorretas (Enunciado, Explicação, Banca e Matéria).
-- Filtros por matéria e navegação rápida direto para o item.
+### 📝 Caderno de Erros & Revisão
+- **Registro de Questões e Falhas:** Catalogação de tópicos que precisam de reforço.
+- **Exportação Multi-formato:** Exporte suas anotações e caderno de erros em `CSV`, `JSON` e `TXT` para integração com outras ferramentas (como Anki).
 
-### 🔍 4. Busca Global Estilo *Command Palette* (`Ctrl+F`)
-- Busca instantânea e unificada em todo o aplicativo:
-  - 📚 Matérias
-  - 🔖 Tópicos / Capítulos
-  - ❌ Enunciados e bancas do Caderno de Erros
-  - 📝 Anotações e 🖍️ Grifos do leitor
-
-### 📊 5. Dashboard & Estatísticas
-- Visão geral do tempo estudado, distribuição por matéria e métricas do ciclo.
-
-### ⚙️ 6. Gestão de Dados & Backup
-- Exportação e importação de **Backup completo (.zip)** com PDFs e dados salvos.
-- Painel de estatísticas de banco de dados e zona de reset seguro.
+### ⚙️ Segurança e Infraestrutura
+- **Migrações de Banco Automáticas:** Atualizações transparentes no SQLite local sem perda de dados do usuário[cite: 1].
+- **Sistema de Backup Local:** Backup automático e restauração segura das suas bases de dados e arquivos marcados[cite: 1].
 
 ---
 
 ## 🛠️ Tecnologias Utilizadas
 
-- **Linguagem:** Python 3.10+
-- **Interface Gráfica (GUI):** PySide6 (Qt for Python)
-- **Banco de Dados & ORM:** SQLite + SQLAlchemy
-- **Processamento de PDFs:** PyMuPDF (FitZ)
-- **Design/Tema:** Custom QSS (Catppuccin Macchiato Palette)
+- **Linguagem:** [Python 3.10+](https://www.python.org/)[cite: 1]
+- **Interface Gráfica (GUI):** [PySide6 (Qt for Python)](https://wiki.qt.io/Qt_for_Python)[cite: 1]
+- **Manipulação de PDF:** [PyMuPDF (fitz)](https://pymupdf.readthedocs.io/)[cite: 1]
+- **ORMs e Banco de Dados:** [SQLAlchemy](https://www.sqlalchemy.org/) + [SQLite](https://www.sqlite.org/)[cite: 1]
+- **Testes:** [Pytest](https://docs.pytest.org/)[cite: 1]
 
 ---
+
+## 📸 Demonstração e Funcionalidades
+
+<div align="center">
+  <!-- Imagem Principal / Dashboard -->
+  <img src="docs/assets/dashboard.png" alt="FocusFlow Dashboard" width="100%" />
+</div>
+
+<br />
+
+### 🔄 Matérias & Ciclo
+<div align="center">
+  <img src="docs/assets/materias_ciclo.png" alt="Ciclo de Estudos" width="85%" />
+</div>
+
+
+### 📚 Leitor de PDF Integrado & Extração Automática
+<div align="center">
+  <img src="docs/assets/leitor.png" alt="Leitor de PDF e Toc" width="85%" />
+</div>
+
+### 📝 Caderno de Erros & Exportação
+<div align="center">
+  <img src="docs/assets/caderno_erros.png" alt="Caderno de Erros" width="85%" />
+</div>
+
+
 
 ## 🚀 Como Executar o Projeto
 
 ### Pré-requisitos
-- Python 3.10 ou superior instalado.
+- Python 3.10 ou superior instalado na máquina[cite: 1].
+- Git instalado.
 
 ### Passo a Passo
 
 1. **Clone o repositório:**
    ```bash
-   git clone (https://github.com/dev-ansu/FocusFlow.git)
-   cd FocusFlow
+   git clone [https://github.com/dev-ansu/focusflow.git](https://github.com/dev-ansu/focusflow.git)
+   cd focusflow
 
-2. **Crie e ative um ambiente virtual (venv):**
-
-    ```Bash
-
-    # Linux/macOS
-    python3 -m venv venv
-    source venv/bin/activate
-
+2. Crie e ative um ambiente virtual (venv):
     # Windows
-    python -m venv venv
-    venv\Scripts\activate
+        python -m venv venv
+        .\venv\Scripts\activate
 
-3. **Instale as dependências:**
+    # Linux / macOS
+        python3 -m venv venv
+        source venv/bin/activate
 
-    ```Bash
+3. Instale as dependências:
     pip install -r requirements.txt
 
-4. **Execute a aplicação:**
+4. Execute a aplicação:
 
-    ```Bash
     python3 main.py
 
-📂 Estrutura do Projeto
-   
-    FocusFlow/
-    ├── database/         # Conexão SQLite e inicialização das tabelas
-    ├── models/           # Modelos SQLAlchemy (Subject, Note, QuestionError, etc.)
-    ├── services/         # Parsers de PDF, leitores de TOC e BackupManager
-    ├── ui/               # Views e Modais em PySide6
-    │   ├── dashboard.py
-    │   ├── error_notebook.py
-    │   ├── global_search_dialog.py
-    │   ├── reader.py
-    │   ├── settings.py
-    │   └── subjects.py
-    ├── main.py           # Ponto de entrada do aplicativo
-    └── requirements.txt  # Dependências do projeto
+🤝 Contribuição
+    Contribuições são super bem-vindas! Se você tiver sugestões de melhorias, relatórios de bugs ou novas funcionalidades:
+
+    1. Faça um Fork do projeto.
+
+    2. Crie uma Branch para a sua Feature (git checkout -b feature/IncrívelFeature).
+
+    3. Faça o Commit das suas alterações (git commit -m 'Add: IncrívelFeature').
+
+    4. Faça o Push para a Branch (git push origin feature/IncrívelFeature).
+
+    5. Abra um Pull Request.
