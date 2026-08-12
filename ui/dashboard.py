@@ -1,12 +1,24 @@
-from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
-    QPushButton, QProgressBar, QGroupBox, QMessageBox, QScrollArea, QFrame
-)
+from datetime import datetime, timezone
+
 from PySide6.QtCore import Qt, Signal
-from database.connection import SessionLocal
-from models.models import Subject, StudyBlock, BlockStatus, Topic, PdfDocument
+from PySide6.QtWidgets import (
+    QFrame,
+    QGroupBox,
+    QHBoxLayout,
+    QLabel,
+    QMessageBox,
+    QProgressBar,
+    QPushButton,
+    QScrollArea,
+    QVBoxLayout,
+    QWidget,
+)
 from sqlalchemy.sql.expression import func
-from datetime import datetime
+
+from config.app import config
+from database.connection import SessionLocal
+from models.models import BlockStatus, PdfDocument, StudyBlock, Subject, Topic
+from services.study_manager import StudyManager
 
 
 class DashboardView(QWidget):
@@ -17,8 +29,9 @@ class DashboardView(QWidget):
         self.current_block_id = None
         self.init_ui()
 
-
-    def _create_kpi_card(self, title: str, initial_val: str = "0", val_color: str = "#89B4FA"):
+    def _create_kpi_card(
+        self, title: str, initial_val: str = "0", val_color: str = "#89B4FA"
+    ):
         card = QFrame()
         card.setStyleSheet("""
             QFrame {
@@ -33,10 +46,14 @@ class DashboardView(QWidget):
         layout.setContentsMargins(12, 10, 12, 10)
 
         lbl_title = QLabel(title)
-        lbl_title.setStyleSheet("color: #A6ADC8; font-size: 11px; font-weight: bold; border: none;")
-        
+        lbl_title.setStyleSheet(
+            "color: #A6ADC8; font-size: 11px; font-weight: bold; border: none;"
+        )
+
         lbl_value = QLabel(initial_val)
-        lbl_value.setStyleSheet(f"color: {val_color}; font-size: 20px; font-weight: bold; border: none;")
+        lbl_value.setStyleSheet(
+            f"color: {val_color}; font-size: 20px; font-weight: bold; border: none;"
+        )
 
         layout.addWidget(lbl_title)
         layout.addWidget(lbl_value)
@@ -56,7 +73,7 @@ class DashboardView(QWidget):
         layout.setSpacing(16)
 
         # 1. Título Principal
-        lbl_app_title = QLabel("⚡ ESTUDOFLOW")
+        lbl_app_title = QLabel(f"⚡ {config.APP_NAME}")
         lbl_app_title.setStyleSheet("""
             QLabel {
                 color: #CBA6F7;
@@ -71,10 +88,18 @@ class DashboardView(QWidget):
         kpi_layout = QHBoxLayout()
         kpi_layout.setSpacing(12)
 
-        self.card_pages, self.lbl_kpi_pages = self._create_kpi_card("📄 PÁGINAS LIDAS", val_color="#89B4FA")
-        self.card_blocks, self.lbl_kpi_blocks = self._create_kpi_card("🧩 BLOCOS CONCLUÍDOS", val_color="#A6E3A1")
-        self.card_overall, self.lbl_kpi_overall = self._create_kpi_card("🎯 PROGRESSO GERAL", val_color="#F9E2AF")
-        self.card_time, self.lbl_kpi_time = self._create_kpi_card("⏳ TEMPO INVESTIDO", val_color="#FAB387")
+        self.card_pages, self.lbl_kpi_pages = self._create_kpi_card(
+            "📄 PÁGINAS LIDAS", val_color="#89B4FA"
+        )
+        self.card_blocks, self.lbl_kpi_blocks = self._create_kpi_card(
+            "🧩 BLOCOS CONCLUÍDOS", val_color="#A6E3A1"
+        )
+        self.card_overall, self.lbl_kpi_overall = self._create_kpi_card(
+            "🎯 PROGRESSO GERAL", val_color="#F9E2AF"
+        )
+        self.card_time, self.lbl_kpi_time = self._create_kpi_card(
+            "⏳ TEMPO INVESTIDO", val_color="#FAB387"
+        )
 
         kpi_layout.addWidget(self.card_pages)
         kpi_layout.addWidget(self.card_blocks)
@@ -107,7 +132,9 @@ class DashboardView(QWidget):
         card_layout.setSpacing(10)
 
         self.lbl_info = QLabel("Nenhum estudo em andamento ou pendente.")
-        self.lbl_info.setStyleSheet("font-size: 14px; color: #CDD6F4; line-height: 1.4;")
+        self.lbl_info.setStyleSheet(
+            "font-size: 14px; color: #CDD6F4; line-height: 1.4;"
+        )
         self.lbl_info.setWordWrap(True)
         card_layout.addWidget(self.lbl_info)
 
@@ -227,7 +254,7 @@ class DashboardView(QWidget):
         self.prog_layout = QVBoxLayout(self.scroll_content)
         self.prog_layout.setContentsMargins(0, 0, 5, 0)
         self.prog_layout.setSpacing(10)
-        
+
         self.scroll_area.setWidget(self.scroll_content)
         group_layout.addWidget(self.scroll_area)
 
@@ -247,60 +274,73 @@ class DashboardView(QWidget):
             if block:
                 self.start_study_signal.emit(block.id)
             else:
-                QMessageBox.information(self, "Aviso", "Não há estudos em andamento para retomar.")
+                QMessageBox.information(
+                    self, "Aviso", "Não há estudos em andamento para retomar."
+                )
         finally:
             db.close()
-
 
     def _start_block_by_query(self, query):
         db = SessionLocal()
         try:
             block = query.first()
             if block:
-                # Força a atualização do status antes de abrir o leitor
+                # Transiciona e atualiza horários usando UTC
                 block.status = BlockStatus.EM_ANDAMENTO
                 if not block.started_at:
                     block.started_at = datetime.now(timezone.utc)
                 db.commit()
-                
+
                 self.start_study_signal.emit(block.id)
             else:
-                QMessageBox.information(self, "Aviso", "Não há blocos pendentes disponíveis.")
+                QMessageBox.information(
+                    self, "Aviso", "Não há blocos pendentes disponíveis."
+                )
         except Exception as e:
             db.rollback()
+            if config.DEBUG:
+                print(
+                    f"[{config.APP_NAME}] Erro ao iniciar bloco por consulta: {e}"
+                )
             QMessageBox.critical(self, "Erro", f"Erro ao iniciar bloco: {e}")
         finally:
             db.close()
 
     def start_short_block(self):
         db = SessionLocal()
-        q = (
-            db.query(StudyBlock)
-            .filter(StudyBlock.status == BlockStatus.PENDENTE)
-            .order_by((StudyBlock.page_end - StudyBlock.page_start).asc())
-        )
-        self._start_block_by_query(q)
+        try:
+            q = (
+                db.query(StudyBlock)
+                .filter(StudyBlock.status == BlockStatus.PENDENTE)
+                .order_by((StudyBlock.page_end - StudyBlock.page_start).asc())
+            )
+            self._start_block_by_query(q)
+        finally:
+            db.close()
 
     def start_long_block(self):
         db = SessionLocal()
-        q = (
-            db.query(StudyBlock)
-            .filter(StudyBlock.status == BlockStatus.PENDENTE)
-            .order_by((StudyBlock.page_end - StudyBlock.page_start).desc())
-        )
-        self._start_block_by_query(q)
+        try:
+            q = (
+                db.query(StudyBlock)
+                .filter(StudyBlock.status == BlockStatus.PENDENTE)
+                .order_by((StudyBlock.page_end - StudyBlock.page_start).desc())
+            )
+            self._start_block_by_query(q)
+        finally:
+            db.close()
 
     def start_random_block(self):
         db = SessionLocal()
-        q = (
-            db.query(StudyBlock)
-            .filter(StudyBlock.status == BlockStatus.PENDENTE)
-            .order_by(func.random())
-        )
-        self._start_block_by_query(q)
-    def show_dashboard(self):
-        self.dashboard_view.refresh()  # Recarrega a fila de matérias e KPIs
-        self.stacked_widget.setCurrentWidget(self.dashboard_view)
+        try:
+            q = (
+                db.query(StudyBlock)
+                .filter(StudyBlock.status == BlockStatus.PENDENTE)
+                .order_by(func.random())
+            )
+            self._start_block_by_query(q)
+        finally:
+            db.close()
 
     def refresh(self):
         db = SessionLocal()
@@ -314,9 +354,14 @@ class DashboardView(QWidget):
             )
 
             if in_progress_block:
-                page = in_progress_block.current_page or in_progress_block.page_start
+                page = (
+                    in_progress_block.current_page
+                    or in_progress_block.page_start
+                )
                 self.btn_resume_last.setEnabled(True)
-                self.btn_resume_last.setText(f"🔄 Retomar {in_progress_block.topic.title} (Pág. {page})")
+                self.btn_resume_last.setText(
+                    f"🔄 Retomar {in_progress_block.topic.title} (Pág. {page})"
+                )
             else:
                 self.btn_resume_last.setEnabled(False)
                 self.btn_resume_last.setText("🔄 Nenhum Estudo Interrompido")
@@ -324,10 +369,14 @@ class DashboardView(QWidget):
             # 2. Métricas Gerais
             all_blocks = db.query(StudyBlock).all()
             total_b = len(all_blocks)
-            done_b_list = [b for b in all_blocks if b.status == BlockStatus.CONCLUIDO]
+            done_b_list = [
+                b for b in all_blocks if b.status == BlockStatus.CONCLUIDO
+            ]
             done_b = len(done_b_list)
 
-            pages_read = sum((b.page_end - b.page_start + 1) for b in done_b_list)
+            pages_read = sum(
+                (b.page_end - b.page_start + 1) for b in done_b_list
+            )
             overall_pct = int((done_b / total_b) * 100) if total_b > 0 else 0
 
             total_seconds = sum(b.time_spent_seconds or 0 for b in all_blocks)
@@ -347,66 +396,29 @@ class DashboardView(QWidget):
             self.lbl_kpi_overall.setText(f"{overall_pct}%")
             self.lbl_kpi_time.setText(time_str)
 
-            # 3. Bloco Recomendado
-            next_block = None
-            all_subjects = db.query(Subject).order_by(Subject.order.asc(), Subject.id.asc()).all()
+            # 3. Bloco Recomendado (Delegado para o StudyManager)
+            next_block = StudyManager.get_next_block_to_study(db)
+            all_subjects_count = db.query(Subject).count()
 
-            if all_subjects:
-                # Busca qual foi o último bloco finalizado/concluído para guiar o ciclo
-                last_completed = (
-                    db.query(StudyBlock)
-                    .join(Topic)
-                    .join(PdfDocument)
-                    .filter(StudyBlock.status == BlockStatus.CONCLUIDO)
-                    .order_by(
-                        StudyBlock.completed_at.desc(),
-                        StudyBlock.id.desc()
-                    )
-                    .first()
-                )
-
-                subj_ids = [s.id for s in all_subjects]
-
-                if last_completed and last_completed.topic and last_completed.topic.pdf:
-                    last_subj_id = last_completed.topic.pdf.subject_id
-                    try:
-                        last_idx = subj_ids.index(last_subj_id)
-                        # Rotaciona para iniciar a busca a partir da PRÓXIMA matéria na fila
-                        ordered_subj_ids = subj_ids[last_idx + 1:] + subj_ids[:last_idx + 1]
-                    except ValueError:
-                        ordered_subj_ids = subj_ids
-                else:
-                    ordered_subj_ids = subj_ids
-
-                # 1º Procura o primeiro bloco EM_ANDAMENTO ou PENDENTE seguindo a rotação estrita das matérias
-                for s_id in ordered_subj_ids:
-                    found_block = (
-                        db.query(StudyBlock)
-                        .join(Topic)
-                        .join(PdfDocument)
-                        .filter(
-                            PdfDocument.subject_id == s_id,
-                            StudyBlock.status.in_([BlockStatus.EM_ANDAMENTO, BlockStatus.PENDENTE])
-                        )
-                        .order_by(
-                            # Se estiver em andamento vem primeiro, caso contrário pega o primeiro tópico/bloco
-                            StudyBlock.status.asc(),
-                            Topic.order.asc(), 
-                            StudyBlock.id.asc()
-                        )
-                        .first()
-                    )
-                    if found_block:
-                        next_block = found_block
-                        break
-
-            if next_block and next_block.topic and next_block.topic.pdf and next_block.topic.pdf.subject:
+            if (
+                next_block
+                and next_block.topic
+                and next_block.topic.pdf
+                and next_block.topic.pdf.subject
+            ):
                 self.current_block_id = next_block.id
                 subj_name = next_block.topic.pdf.subject.name
                 pdf_title = next_block.topic.pdf.title
                 topic_title = next_block.topic.title
-                
-                p_start = next_block.current_page if (next_block.current_page and next_block.current_page > 0) else next_block.page_start
+
+                p_start = (
+                    next_block.current_page
+                    if (
+                        next_block.current_page
+                        and next_block.current_page > 0
+                    )
+                    else next_block.page_start
+                )
                 p_end = next_block.page_end
 
                 self.lbl_info.setText(
@@ -417,11 +429,15 @@ class DashboardView(QWidget):
                 self.btn_start.setEnabled(True)
             else:
                 self.current_block_id = None
-                if not all_subjects:
-                    self.lbl_info.setText("Nenhuma matéria ou tópico cadastrado. Cadastre matérias para iniciar o ciclo.")
+                if all_subjects_count == 0:
+                    self.lbl_info.setText(
+                        "Nenhuma matéria ou tópico cadastrado. Cadastre matérias para iniciar o ciclo."
+                    )
                 else:
-                    self.lbl_info.setText("Parabéns! Todos os blocos cadastrados foram concluídos.")
-                
+                    self.lbl_info.setText(
+                        "Parabéns! Todos os blocos cadastrados foram concluídos."
+                    )
+
                 self.btn_start.setEnabled(False)
 
             # 4. Limpeza da Lista por Matéria
@@ -431,14 +447,30 @@ class DashboardView(QWidget):
                 if widget:
                     widget.deleteLater()
 
-            # 5. Renderização de TODAS as Matérias Ordenadas
-            subjects = db.query(Subject).order_by(Subject.order.asc(), Subject.id.asc()).all()
+            # 5. Renderização das Matérias
+            subjects = (
+                db.query(Subject)
+                .order_by(Subject.order.asc(), Subject.id.asc())
+                .all()
+            )
             for s in subjects:
-                sub_total = db.query(StudyBlock).join(Topic).join(PdfDocument).filter(PdfDocument.subject_id == s.id).count()
-                sub_done = db.query(StudyBlock).join(Topic).join(PdfDocument).filter(
-                    PdfDocument.subject_id == s.id,
-                    StudyBlock.status == BlockStatus.CONCLUIDO
-                ).count()
+                sub_total = (
+                    db.query(StudyBlock)
+                    .join(Topic)
+                    .join(PdfDocument)
+                    .filter(PdfDocument.subject_id == s.id)
+                    .count()
+                )
+                sub_done = (
+                    db.query(StudyBlock)
+                    .join(Topic)
+                    .join(PdfDocument)
+                    .filter(
+                        PdfDocument.subject_id == s.id,
+                        StudyBlock.status == BlockStatus.CONCLUIDO,
+                    )
+                    .count()
+                )
 
                 pct = int((sub_done / sub_total) * 100) if sub_total > 0 else 0
 
@@ -446,12 +478,14 @@ class DashboardView(QWidget):
                 row = QHBoxLayout(container)
                 row.setContentsMargins(0, 0, 0, 0)
                 row.setSpacing(12)
-                
+
                 lbl = QLabel(s.name)
                 lbl.setMinimumWidth(160)
-                lbl.setStyleSheet("font-weight: bold; color: #CDD6F4; font-size: 13px;")
+                lbl.setStyleSheet(
+                    "font-weight: bold; color: #CDD6F4; font-size: 13px;"
+                )
                 row.addWidget(lbl)
-                
+
                 bar = QProgressBar()
                 bar.setValue(pct)
                 bar.setStyleSheet("""
@@ -471,7 +505,7 @@ class DashboardView(QWidget):
                     }
                 """)
                 row.addWidget(bar)
-                
+
                 btn_study_subj = QPushButton("Estudar ➔")
                 btn_study_subj.setCursor(Qt.PointingHandCursor)
                 btn_study_subj.setStyleSheet("""
@@ -486,7 +520,7 @@ class DashboardView(QWidget):
                     QPushButton:hover { background-color: #B4BEFE; }
                     QPushButton:disabled { background-color: #313244; color: #585B70; }
                 """)
-                
+
                 if sub_total == 0:
                     btn_study_subj.setDisabled(True)
                     btn_study_subj.setText("Sem Blocos")
@@ -494,8 +528,11 @@ class DashboardView(QWidget):
                     btn_study_subj.setDisabled(True)
                     btn_study_subj.setText("Concluído")
                 else:
-                    # Fix do closure/binding de ID de matéria com argumento padrão (s_id=s.id)
-                    btn_study_subj.clicked.connect(lambda checked=False, s_id=s.id: self.start_subject_study(s_id))
+                    btn_study_subj.clicked.connect(
+                        lambda checked=False, s_id=s.id: self.start_subject_study(
+                            s_id
+                        )
+                    )
 
                 row.addWidget(btn_study_subj)
                 self.prog_layout.addWidget(container)
@@ -505,24 +542,30 @@ class DashboardView(QWidget):
         finally:
             db.close()
 
-    def start_subject_study(self, subject_id):
+    def start_subject_study(self, subject_id: int):
         db = SessionLocal()
         try:
             block = (
                 db.query(StudyBlock)
                 .join(Topic)
                 .join(PdfDocument)
-                .filter(PdfDocument.subject_id == subject_id, StudyBlock.status == BlockStatus.EM_ANDAMENTO)
+                .filter(
+                    PdfDocument.subject_id == subject_id,
+                    StudyBlock.status == BlockStatus.EM_ANDAMENTO,
+                )
                 .order_by(Topic.order.asc(), StudyBlock.id.asc())
                 .first()
             )
-            
+
             if not block:
                 block = (
                     db.query(StudyBlock)
                     .join(Topic)
                     .join(PdfDocument)
-                    .filter(PdfDocument.subject_id == subject_id, StudyBlock.status == BlockStatus.PENDENTE)
+                    .filter(
+                        PdfDocument.subject_id == subject_id,
+                        StudyBlock.status == BlockStatus.PENDENTE,
+                    )
                     .order_by(Topic.order.asc(), StudyBlock.id.asc())
                     .first()
                 )
@@ -530,7 +573,11 @@ class DashboardView(QWidget):
             if block:
                 self.start_study_signal.emit(block.id)
             else:
-                QMessageBox.information(self, "Aviso", "Não há blocos pendentes para esta matéria.")
+                QMessageBox.information(
+                    self,
+                    "Aviso",
+                    "Não há blocos pendentes para esta matéria.",
+                )
         finally:
             db.close()
 

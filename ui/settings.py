@@ -11,14 +11,14 @@ from models.models import (
     Subject, PdfDocument, Topic, StudyBlock, StudySession, 
     StudyCycle, Highlight, Note, QuestionError
 )
-
+from config.app import config
 
 class SettingsView(QWidget):
     app_reset = Signal()
 
     def __init__(self):
         super().__init__()
-        self.settings = QSettings("EstudoFlow", "Preferences")
+        self.settings = QSettings(f"{config.APP_NAME}", "Preferences")
         self.init_ui()
         self.refresh_stats()
 
@@ -207,7 +207,7 @@ class SettingsView(QWidget):
                 print(f"Erro ao carregar estatísticas: {e}")
 
     def export_backup(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Salvar Backup", "estudoflow_backup.zip", "ZIP Files (*.zip)")
+        path, _ = QFileDialog.getSaveFileName(self, "Salvar Backup", f"{config.APP_NAME}"+"_backup.zip", "ZIP Files (*.zip)")
         if path:
             try:
                 BackupManager.export_backup(path)
@@ -268,7 +268,7 @@ class SettingsView(QWidget):
                     QMessageBox.information(
                         self, 
                         "Aplicação Resetada", 
-                        "Todos os dados foram excluídos com sucesso.\nO EstudoFlow está limpo."
+                        "Todos os dados foram excluídos com sucesso.\nO " + f"{config.APP_NAME}" + " está limpo."
                     )
                 except Exception as e:
                     db.rollback()

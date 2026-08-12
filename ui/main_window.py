@@ -17,12 +17,13 @@ from ui.error_notebook import ErrorNotebookView
 from services.toc_detector import TOCDetector
 from services.topic_parser import TopicParser
 from services.pdf_parser import PDFParser
+from config.app import config
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("EstudoFlow - Organização de Estudos")
+        self.setWindowTitle(f"{config.APP_NAME} - v{config.APP_VERSION}")
         self.resize(1100, 720)
         self.is_returning_to_import = False
 
@@ -98,7 +99,7 @@ class MainWindow(QMainWindow):
         sidebar_layout.setContentsMargins(12, 12, 12, 12)
         sidebar_layout.setSpacing(8)
 
-        lbl_title = QLabel("📚 EstudoFlow")
+        lbl_title = QLabel("📚" f"{config.APP_NAME}")
         lbl_title.setObjectName("AppTitle")
         sidebar_layout.addWidget(lbl_title)
         sidebar_layout.addSpacing(10)

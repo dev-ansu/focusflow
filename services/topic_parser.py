@@ -1,57 +1,87 @@
-import pymupdf as fitz
+from pathlib import Path
 import re
+from typing import Dict, List, Union
+import fitz  # PyMuPDF
+
+from config.app import config
+
 
 class TopicParser:
+
     @classmethod
-    def parse_toc(cls, file_path: str, toc_pages: list[int], total_pages: int):
+    def parse_toc(
+        cls,
+        file_path: Union[str, Path],
+        toc_pages: List[int],
+        total_pages: int,
+    ) -> List[Dict[str, Union[str, int]]]:
+        """
+        Extrai tópicos do PDF utilizando uma estratégia em 3 camadas:
+        1. Bookmarks/Índice nativo do arquivo.
+        2. Expressões regulares nas páginas detectadas do sumário.
+        3. Fallback inteligente dividindo o PDF em blocos.
+        """
+        path = Path(file_path)
+
+        if not path.exists():
+            if config.DEBUG:
+                print(f"[{config.APP_NAME}] PDF não encontrado em: {path}")
+            return cls._generate_fallback_topics(total_pages)
+
         try:
-            doc = fitz.open(file_path)
-        except Exception:
+            doc = fitz.open(path)
+        except Exception as e:
+            if config.DEBUG:
+                print(
+                    f"[{config.APP_NAME}] Erro ao abrir PDF para extração de tópicos '{path.name}': {e}"
+                )
             return cls._generate_fallback_topics(total_pages)
 
         raw_topics = []
 
-        # --- CAMADA 1: Bookmarks Nativos ---
         try:
-            native_toc = doc.get_toc(simple=True)
-            if native_toc:
-                for item in native_toc:
-                    title = item[1].strip()
-                    page_start = item[2]
-                    if 1 <= page_start <= total_pages and len(title) > 2:
-                        raw_topics.append({
-                            "title": title,
-                            "page_start": page_start
-                        })
-        except Exception:
-            pass
+            # --- CAMADA 1: Bookmarks Nativos ---
+            try:
+                native_toc = doc.get_toc(simple=True)
+                if native_toc:
+                    for item in native_toc:
+                        title = item[1].strip()
+                        page_start = item[2]
+                        if 1 <= page_start <= total_pages and len(title) > 2:
+                            raw_topics.append(
+                                {"title": title, "page_start": page_start}
+                            )
+            except Exception as e:
+                if config.DEBUG:
+                    print(
+                        f"[{config.APP_NAME}] Erro na Camada 1 (Native TOC): {e}"
+                    )
 
-        # --- CAMADA 2: Regex nas Páginas do Sumário Detectado ---
-        if not raw_topics and toc_pages:
-            raw_lines = []
-            for p in toc_pages:
-                if p < len(doc):
-                    text = doc[p].get_text("text")
-                    raw_lines.extend(text.splitlines())
+            # --- CAMADA 2: Regex nas Páginas do Sumário Detectado ---
+            if not raw_topics and toc_pages:
+                raw_lines = []
+                for p in toc_pages:
+                    if p < len(doc):
+                        text = doc[p].get_text("text")
+                        raw_lines.extend(text.splitlines())
 
-            pattern = re.compile(r'^\s*(.*?)\s*[\.\s…\-]+\s*(\d+)\s*$')
+                pattern = re.compile(r"^\s*(.*?)\s*[\.\s…\-]+\s*(\d+)\s*$")
 
-            for line in raw_lines:
-                line = line.strip()
-                if not line:
-                    continue
-                match = pattern.match(line)
-                if match:
-                    title = match.group(1).strip()
-                    page_start = int(match.group(2))
-                    
-                    if len(title) > 2 and 1 <= page_start <= total_pages:
-                        raw_topics.append({
-                            "title": title,
-                            "page_start": page_start
-                        })
+                for line in raw_lines:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    match = pattern.match(line)
+                    if match:
+                        title = match.group(1).strip()
+                        page_start = int(match.group(2))
 
-        doc.close()
+                        if len(title) > 2 and 1 <= page_start <= total_pages:
+                            raw_topics.append(
+                                {"title": title, "page_start": page_start}
+                            )
+        finally:
+            doc.close()
 
         # --- CAMADA 3: Fallback Inteligente caso falhem as camadas 1 e 2 ---
         if not raw_topics:
@@ -78,33 +108,41 @@ class TopicParser:
             else:
                 curr_end = total_pages
 
-            final_topics.append({
-                "title": curr_title,
-                "page_start": curr_start,
-                "page_end": curr_end
-            })
+            final_topics.append(
+                {
+                    "title": curr_title,
+                    "page_start": curr_start,
+                    "page_end": curr_end,
+                }
+            )
 
         return final_topics
 
     @staticmethod
-    def _generate_fallback_topics(total_pages: int, chunk_size: int = 15) -> list[dict]:
+    def _generate_fallback_topics(
+        total_pages: int, chunk_size: int = 15
+    ) -> List[Dict[str, Union[str, int]]]:
         """
         Gera tópicos genéricos baseados em blocos de páginas caso o PDF seja escaneado
         ou não tenha estrutura de sumário extraível.
         """
         if total_pages <= 0:
-            return [{"title": "Leitura Completa", "page_start": 1, "page_end": 1}]
+            return [
+                {"title": "Leitura Completa", "page_start": 1, "page_end": 1}
+            ]
 
         topics = []
         part = 1
-        
+
         for start in range(1, total_pages + 1, chunk_size):
             end = min(start + chunk_size - 1, total_pages)
-            topics.append({
-                "title": f"Parte {part} (Págs. {start}-{end})",
-                "page_start": start,
-                "page_end": end
-            })
+            topics.append(
+                {
+                    "title": f"Parte {part} (Págs. {start}-{end})",
+                    "page_start": start,
+                    "page_end": end,
+                }
+            )
             part += 1
 
         return topics
