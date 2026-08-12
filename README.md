@@ -1,4 +1,4 @@
-# 📚 EstudoFlow
+# 📚 FocusFlow
 
 > Um gerenciador de estudos desktop moderno, focado em ciclos de estudo, leitura de PDFs, anotações e Caderno de Erros.
 
@@ -11,7 +11,7 @@
 
 ## 📌 Sobre o Projeto
 
-O **EstudoFlow** foi desenvolvido para centralizar toda a rotina de estudos de concursos, vestibulares e graduação em um único aplicativo desktop local, rápido e sem distrações. 
+O **FocusFlow** foi desenvolvido para centralizar toda a rotina de estudos de concursos, vestibulares e graduação em um único aplicativo desktop local, rápido e sem distrações. 
 
 Ele elimina a necessidade de usar planilhas complexas, leitores de PDF genéricos e apps de notas separados, integrando tudo num fluxo de trabalho otimizado.
 
@@ -66,8 +66,8 @@ Ele elimina a necessidade de usar planilhas complexas, leitores de PDF genérico
 
 1. **Clone o repositório:**
    ```bash
-   git clone (https://github.com/dev-ansu/estudoFlow.git)
-   cd estudoFlow
+   git clone (https://github.com/dev-ansu/FocusFlow.git)
+   cd FocusFlow
 
 2. **Crie e ative um ambiente virtual (venv):**
 
@@ -93,7 +93,7 @@ Ele elimina a necessidade de usar planilhas complexas, leitores de PDF genérico
 
 📂 Estrutura do Projeto
    
-    estudoFlow/
+    FocusFlow/
     ├── database/         # Conexão SQLite e inicialização das tabelas
     ├── models/           # Modelos SQLAlchemy (Subject, Note, QuestionError, etc.)
     ├── services/         # Parsers de PDF, leitores de TOC e BackupManager
