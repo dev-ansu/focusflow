@@ -12,6 +12,85 @@ from database.connection import SessionLocal
 from models.models import StudyBlock, BlockStatus, Topic, PdfDocument, Subject, Highlight, Note
 from services.study_manager import StudyManager
 
+from PySide6.QtWidgets import QDialog, QSpinBox, QFormLayout, QDialogButtonBox, QTreeWidget, QTreeWidgetItem
+
+class PomodoroSettingsDialog(QDialog):
+    def __init__(self, work_min=25, short_min=5, long_min=15, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("⚙️ Configurações do Pomodoro")
+        self.setFixedWidth(280)
+        
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #1E1E2E;
+                color: #CDD6F4;
+                font-family: 'Segoe UI', system-ui, sans-serif;
+            }
+            QLabel {
+                color: #CDD6F4;
+                font-size: 13px;
+            }
+            QSpinBox {
+                background-color: #181825;
+                color: #CDD6F4;
+                border: 1px solid #313244;
+                border-radius: 5px;
+                padding: 4px;
+                font-size: 13px;
+            }
+            QSpinBox::up-button, QSpinBox::down-button {
+                background-color: #313244;
+                border-radius: 2px;
+            }
+            QPushButton {
+                background-color: #313244;
+                color: #CDD6F4;
+                border: 1px solid #45475A;
+                border-radius: 5px;
+                padding: 6px 14px;
+                font-weight: 500;
+            }
+            QPushButton:hover {
+                background-color: #45475A;
+            }
+        """)
+
+        layout = QVBoxLayout(self)
+        form_layout = QFormLayout()
+        form_layout.setSpacing(10)
+
+        # Campos de minutos
+        self.sb_work = QSpinBox()
+        self.sb_work.setRange(1, 180)
+        self.sb_work.setValue(work_min)
+        self.sb_work.setSuffix(" min")
+
+        self.sb_short = QSpinBox()
+        self.sb_short.setRange(1, 60)
+        self.sb_short.setValue(short_min)
+        self.sb_short.setSuffix(" min")
+
+        self.sb_long = QSpinBox()
+        self.sb_long.setRange(1, 120)
+        self.sb_long.setValue(long_min)
+        self.sb_long.setSuffix(" min")
+
+        form_layout.addRow("🎯 Tempo de Foco:", self.sb_work)
+        form_layout.addRow("☕ Pausa Curta:", self.sb_short)
+        form_layout.addRow("🎉 Pausa Longa:", self.sb_long)
+
+        layout.addLayout(form_layout)
+
+        # Botões do Modal
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addSpacing(10)
+        layout.addWidget(buttons)
+
+    def get_values(self):
+        """Retorna os valores selecionados em minutos."""
+        return self.sb_work.value(), self.sb_short.value(), self.sb_long.value()
 
 class PDFSelectableLabel(QLabel):
     area_selected = Signal(QRect)
@@ -66,6 +145,60 @@ class PDFSelectableLabel(QLabel):
             painter.setPen(QPen(fill_color.darker(120), 1, Qt.PenStyle.SolidLine))
             painter.setBrush(fill_color)
             painter.drawRect(rect)
+
+class PDFOutlineTreeWidget(QTreeWidget):
+    page_requested = Signal(int)  # Emite o número da página (base 1)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setHeaderHidden(True)
+        self.setAnimated(True)
+        self.setStyleSheet("""
+            QTreeWidget {
+                background-color: #181825;
+                color: #CDD6F4;
+                border: 1px solid #313244;
+                border-radius: 6px;
+                padding: 4px;
+                font-size: 12px;
+            }
+            QTreeWidget::item {
+                padding: 4px;
+                border-radius: 4px;
+            }
+            QTreeWidget::item:hover {
+                background-color: #313244;
+            }
+            QTreeWidget::item:selected {
+                background-color: #45475A;
+                color: #89B4FA;
+            }
+        """)
+        self.itemClicked.connect(self.on_item_clicked)
+
+    def load_toc(self, toc_list):
+        """
+        Recebe a lista TOC no formato PyMuPDF: [[level, title, page], ...]
+        """
+        self.clear()
+        if not toc_list:
+            item = QTreeWidgetItem(self, ["Nenhum sumário disponível"])
+            item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
+            return
+
+        parents = {0: self}
+        for level, title, page in toc_list:
+            parent = parents.get(level - 1, self)
+            item = QTreeWidgetItem(parent, [f"{title} (p. {page})"])
+            item.setData(0, Qt.UserRole, page)
+            parents[level] = item
+
+        self.expandToDepth(0)
+
+    def on_item_clicked(self, item, column):
+        page = item.data(0, Qt.UserRole)
+        if page is not None and isinstance(page, int):
+            self.page_requested.emit(page)
 
 
 class StudyReaderView(QWidget):
@@ -189,10 +322,10 @@ class StudyReaderView(QWidget):
         header_layout = QHBoxLayout(self.header_widget)
         header_layout.setContentsMargins(12, 8, 12, 8)
 
-        self.btn_toggle_left = QPushButton("☰ Menu")
+        self.btn_toggle_left = QPushButton("📑 Sumário")
         self.btn_toggle_left.setProperty("class", "tool-btn")
-        self.btn_toggle_left.setToolTip("Ocultar/Exibir Menu Principal")
-        self.btn_toggle_left.clicked.connect(lambda: self.toggle_left_sidebar_requested.emit())
+        self.btn_toggle_left.setToolTip("Ocultar/Exibir Sumário do PDF")
+        self.btn_toggle_left.clicked.connect(self.toggle_left_sidebar)
 
         self.btn_back = QPushButton("⬅️ Voltar")
         self.btn_back.setProperty("class", "tool-btn")
@@ -244,10 +377,38 @@ class StudyReaderView(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
+        # === PAINEL LATERAL ESQUERDO (SUMÁRIO / TOC) ===
+        self.left_sidebar = QFrame()
+        self.left_sidebar.setFixedWidth(240)
+        self.left_sidebar.setVisible(False)  # Inicia oculta por padrão
+        self.left_sidebar.setStyleSheet("""
+            QFrame#LeftSidebar {
+                background-color: #1E1E2E;
+                border-right: 1px solid #313244;
+            }
+        """)
+        self.left_sidebar.setObjectName("LeftSidebar")
+        
+        left_sidebar_layout = QVBoxLayout(self.left_sidebar)
+        left_sidebar_layout.setContentsMargins(10, 10, 10, 10)
+        left_sidebar_layout.setSpacing(8)
+
+        lbl_toc_title = QLabel("<b>📌 Sumário do PDF</b>")
+        lbl_toc_title.setStyleSheet("font-size: 13px; color: #CDD6F4; border: none;")
+        left_sidebar_layout.addWidget(lbl_toc_title)
+
+        self.toc_tree = PDFOutlineTreeWidget()
+        self.toc_tree.page_requested.connect(self.go_to_page_from_toc)
+        left_sidebar_layout.addWidget(self.toc_tree)
+
+        # Adiciona a barra da esquerda no layout principal
+        main_layout.addWidget(self.left_sidebar, stretch=0)
+
         pdf_container_widget = QWidget()
         pdf_container_layout = QVBoxLayout(pdf_container_widget)
         pdf_container_layout.setContentsMargins(12, 12, 12, 12)
         pdf_container_layout.setSpacing(8)
+        
 
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
@@ -410,8 +571,11 @@ class StudyReaderView(QWidget):
         timer_layout.addWidget(lbl_timer_title)
 
         # Seletor de Modo (Cronômetro / Pomodoro)
+        mode_layout = QHBoxLayout()
+        mode_layout.setSpacing(6)
+
         self.cmb_timer_mode = QComboBox()
-        self.cmb_timer_mode.addItems(["⏱️ Cronômetro Livre", "🍅 Modo Pomodoro (25m)"])
+        self.cmb_timer_mode.addItems(["⏱️ Cronômetro Livre", f"🍅 Pomodoro ({int(self.work_duration/60)}m)"])
         self.cmb_timer_mode.setStyleSheet("""
             QComboBox {
                 background-color: #1E1E2E;
@@ -428,7 +592,27 @@ class StudyReaderView(QWidget):
             }
         """)
         self.cmb_timer_mode.currentIndexChanged.connect(self.on_timer_mode_changed)
-        timer_layout.addWidget(self.cmb_timer_mode)
+        mode_layout.addWidget(self.cmb_timer_mode, stretch=1)
+
+        # Botão para abrir o Modal
+        self.btn_pomodoro_settings = QPushButton("⚙️")
+        self.btn_pomodoro_settings.setFixedSize(28, 28)
+        self.btn_pomodoro_settings.setToolTip("Configurar tempos do Pomodoro")
+        self.btn_pomodoro_settings.setStyleSheet("""
+            QPushButton {
+                background-color: #1E1E2E;
+                color: #CDD6F4;
+                border: 1px solid #313244;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #313244;
+            }
+        """)
+        self.btn_pomodoro_settings.clicked.connect(self.open_pomodoro_settings)
+        mode_layout.addWidget(self.btn_pomodoro_settings)
+
+        timer_layout.addLayout(mode_layout)
 
         self.lbl_timer = QLabel("00:00:00")
         self.lbl_timer.setStyleSheet("font-size: 26px; font-weight: bold; color: #A6E3A1; border: none;")
@@ -523,6 +707,57 @@ class StudyReaderView(QWidget):
 
         main_layout.addWidget(self.sidebar, stretch=0)
         outer_layout.addLayout(main_layout)
+    
+    def toggle_left_sidebar(self):
+        if hasattr(self, 'left_sidebar'):
+            is_visible = not self.left_sidebar.isVisible()
+            self.left_sidebar.setVisible(is_visible)
+
+    def go_to_page_from_toc(self, page_num_1based: int):
+        """Navega para a página clicada no Sumário."""
+        if 1 <= page_num_1based <= self.total_pages:
+            self.save_notes()
+            self.current_page = page_num_1based - 1
+            self.render_page()
+            self.scroll_area.verticalScrollBar().setValue(0)
+            self.save_current_page()
+            self.check_block_completion()
+
+    def open_pomodoro_settings(self):
+        work_min = int(self.work_duration / 60)
+        short_min = int(self.short_break / 60)
+        long_min = int(self.long_break / 60)
+
+        dialog = PomodoroSettingsDialog(work_min, short_min, long_min, parent=self)
+        if dialog.exec() == QDialog.Accepted:
+            new_work, new_short, new_long = dialog.get_values()
+            
+            # Atualiza os valores em segundos
+            self.work_duration = new_work * 60
+            self.short_break = new_short * 60
+            self.long_break = new_long * 60
+
+            # Atualiza o texto do item no ComboBox sem disparar o evento de mudança
+            self.cmb_timer_mode.blockSignals(True)
+            self.cmb_timer_mode.setItemText(1, f"🍅 Pomodoro ({new_work}m)")
+            self.cmb_timer_mode.blockSignals(False)
+
+            # Se o modo atual for Pomodoro e o temporizador estiver parado, atualiza a contagem
+            if self.timer_mode == "POMODORO" and not self.timer.isActive():
+                if self.pomodoro_state == "WORK":
+                    self.pomodoro_remaining = self.work_duration
+                elif self.pomodoro_state == "BREAK":
+                    self.pomodoro_remaining = self.short_break
+                elif self.pomodoro_state == "LONG_BREAK":
+                    self.pomodoro_remaining = self.long_break
+                
+                self.refresh_timer_display()
+
+            QMessageBox.information(
+                self, 
+                "Configurações Salvas", 
+                f"Novos tempos salvos:\n• Foco: {new_work} min\n• Pausa Curta: {new_short} min\n• Pausa Longa: {new_long} min"
+            )
 
     # --- LÓGICA DE GERENCIAMENTO DE TIMER E POMODORO ---
     def on_timer_mode_changed(self, index):
@@ -602,17 +837,17 @@ class StudyReaderView(QWidget):
             if self.pomodoros_completed % 4 == 0:
                 self.pomodoro_state = "LONG_BREAK"
                 self.pomodoro_remaining = self.long_break
-                msg = "<b>Hora de uma Pausa Longa! 🎉</b><br>Você concluiu 4 ciclos de foco. Relaxe 15 minutos."
+                msg = f"<b>Hora de uma Pausa Longa! 🎉</b><br>Você concluiu 4 ciclos de foco. Relaxe {int(self.long_break/60)} minutos."
             else:
                 self.pomodoro_state = "BREAK"
                 self.pomodoro_remaining = self.short_break
-                msg = "<b>Hora do Descanso! ☕</b><br>Pausa curta de 5 minutos. Levante e tome uma água."
+                msg = f"<b>Hora do Descanso! ☕</b><br>Pausa curta de {int(self.short_break/60)} minutos. Levante e tome uma água."
                 
             self.lbl_timer.setStyleSheet("font-size: 26px; font-weight: bold; color: #F8BD96; border: none;")
         else:
             self.pomodoro_state = "WORK"
             self.pomodoro_remaining = self.work_duration
-            msg = "<b>Pausa encerrada! 💪</b><br>Pronto para voltar ao foco?"
+            msg = f"<b>Pausa encerrada! 💪</b><br>Pronto para voltar ao foco de {int(self.work_duration/60)} minutos?"
             self.lbl_timer.setStyleSheet("font-size: 26px; font-weight: bold; color: #89B4FA; border: none;")
 
         self.refresh_timer_display()
@@ -838,6 +1073,25 @@ class StudyReaderView(QWidget):
         self.lbl_info.setText("<b>Nenhum bloco selecionado</b>")
         self.lbl_header_title.setText("Leitor de Estudos")
         
+        # --- LIMPEZA E OCULTAÇÃO DO SUMÁRIO (TOC) ---
+        if hasattr(self, 'toc_tree'):
+            self.toc_tree.clear()
+        if hasattr(self, 'left_sidebar'):
+            self.left_sidebar.setVisible(False)
+
+        self.txt_notes.blockSignals(True)
+        self.txt_notes.clear()
+        self.txt_notes.blockSignals(False)
+
+        self.current_pdf_id = None
+        self.block_id = None
+        self.current_page = 0
+        self.total_pages = 0
+        self.lbl_pdf_page.setText("Nenhum PDF carregado.")
+        self.lbl_page_info.setText("Pág: 0 / 0")
+        self.lbl_info.setText("<b>Nenhum bloco selecionado</b>")
+        self.lbl_header_title.setText("Leitor de Estudos")
+        
         self.txt_notes.blockSignals(True)
         self.txt_notes.clear()
         self.txt_notes.blockSignals(False)
@@ -881,6 +1135,11 @@ class StudyReaderView(QWidget):
                 self.current_pdf_id = pdf_doc.id
                 self.doc = fitz.open(pdf_doc.file_path)
                 self.total_pages = len(self.doc)
+
+                # --- CARREGA O SUMÁRIO DO PDF ---
+                toc = self.doc.get_toc()  # Retorna [[level, title, page], ...]
+                if hasattr(self, 'toc_tree'):
+                    self.toc_tree.load_toc(toc)
                 
                 saved_page = block.current_page if (block.current_page and block.current_page > 0) else self.page_start
                 self.current_page = max(0, saved_page - 1)
