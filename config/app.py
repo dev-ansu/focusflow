@@ -12,18 +12,35 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 
-def get_user_data_dir(app_slug: str) -> Path:
+def is_production() -> bool:
     """
-    Retorna a pasta padrão de dados do sistema operacional do usuário.
-    Garante que o banco de dados e arquivos persistam entre atualizações do app.
+    Identifica se a aplicação está rodando em modo de Produção.
     
-    - Windows: C:\\Users\\<usuario>\\AppData\\Roaming\\FocusFlow
-    - Linux:   /home/<usuario>/.local/share/FocusFlow
+    Critérios para Produção:
+    1. O app foi empacotado como executável (ex: PyInstaller define sys.frozen = True).
+    2. A variável de ambiente APP_ENV está explicitamente como 'production'.
     """
+    is_frozen = getattr(sys, "frozen", False)
+    env_var = os.environ.get("APP_ENV", "").lower()
+    
+    return is_frozen or env_var == "production"
+
+
+def get_user_data_dir(app_slug: str, is_prod: bool) -> Path:
+    """
+    Retorna a pasta de dados do sistema baseada no ambiente.
+    
+    - Desenvolviemnto: Salva na raiz da pasta do projeto (`.dev_data/`)
+    - Produção: Salva na pasta do sistema do usuário (%APPDATA% ou ~/.local/share)
+    """
+    if not is_prod:
+        # No ambiente de dev, salva os dados localmente dentro do próprio projeto
+        return BASE_DIR / ".dev_data"
+
+    # No ambiente de produção, salva nos diretórios persistentes do S.O.
     if sys.platform == "win32":
         base_path = Path(os.environ.get("APPDATA", Path.home()))
     else:
-        # Linux / XDG Data Home
         base_path = Path(os.environ.get("XDG_DATA_HOME", Path.home() / ".local" / "share"))
     
     return base_path / app_slug
@@ -32,6 +49,9 @@ def get_user_data_dir(app_slug: str) -> Path:
 @dataclass(frozen=True)
 class AppConfig:
     """ Configurações gerais do aplicativo. """
+
+    # Determina o ambiente dinamicamente na inicialização
+    IS_PROD: bool = field(default_factory=is_production)
 
     # Identificação da aplicação
     APP_NAME: str = "FocusFlow"
@@ -42,17 +62,33 @@ class AppConfig:
 
     BASE_DIR: Path = BASE_DIR
 
-    # Ambiente
-    ENV: str = "development"
-    DEBUG: bool = True
+    # Atribui dinamicamente o ENV e DEBUG com base no ambiente
+    @property
+    def ENV(self) -> str:
+        return "production" if self.IS_PROD else "development"
 
-    # Diretórios persitentes no sistema do usuário (não são apagados em atualizações)
-    DATA_DIR: Path = field(default_factory=lambda: get_user_data_dir("FocusFlow") / "data")
-    BACKUP_DIR: Path = field(default_factory=lambda: get_user_data_dir("FocusFlow") / "backups")
-    LOG_DIR: Path = field(default_factory=lambda: get_user_data_dir("FocusFlow") / "logs")
+    @property
+    def DEBUG(self) -> bool:
+        return not self.IS_PROD
 
-    # Banco de dados
-    DB_NAME: str = "focusflow.db"
+    # Nome do banco dinâmico (opcional: previne misturar se mudar no dev)
+    @property
+    def DB_NAME(self) -> str:
+        return "focusflow.db" if self.IS_PROD else "focusflow_dev.db"
+
+    # Diretórios persistentes
+    DATA_DIR: Path = field(init=False)
+    BACKUP_DIR: Path = field(init=False)
+    LOG_DIR: Path = field(init=False)
+
+    def __post_init__(self):
+        """ Inicializa os diretórios com base no status de produção. """
+        root_data_dir = get_user_data_dir(self.APP_SLUG, self.IS_PROD)
+        
+        # Seta os atributos usando object.__setattr__ por conta do frozen=True no dataclass
+        object.__setattr__(self, 'DATA_DIR', root_data_dir / "data")
+        object.__setattr__(self, 'BACKUP_DIR', root_data_dir / "backups")
+        object.__setattr__(self, 'LOG_DIR', root_data_dir / "logs")
 
     @property
     def DB_URL(self) -> str:
@@ -63,7 +99,7 @@ class AppConfig:
     # Configurações do leitor de PDF / Interface
     DEFAULT_ZOOM_LEVEL: float = 1.2
     AUTO_ADVANCE_BLOCK: bool = True
-    THEME: str = "dark"  # dark, light
+    THEME: str = "dark"
 
     def ensure_directories_exist(self) -> None:
         """ Garante que as pastas essenciais do sistema existam no disco. """
@@ -72,7 +108,7 @@ class AppConfig:
         self.LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 
-# Instância global única (Singleton) para ser importada em qualquer lugar
+# Instância global única (Singleton)
 config = AppConfig()
 
 # Garante que os diretórios necessários sejam criados ao carregar a config
