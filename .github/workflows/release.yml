@@ -19,10 +19,12 @@ jobs:
             asset_name: FocusFlow-Linux.tar.gz
             artifact_file: dist/FocusFlow-Linux.tar.gz
             add_data_sep: ":" # Linux usa dois pontos
+            icon_path: "assets/icon.png"
           - os: windows-latest
             asset_name: FocusFlow-Windows.zip
             artifact_file: dist/FocusFlow-Windows.zip
             add_data_sep: ";" # Windows usa ponto e vírgula
+            icon_path: "assets/icon.ico"
 
     steps:
       - name: Checkout repository
@@ -50,7 +52,7 @@ jobs:
 
       - name: Build executable with PyInstaller
         run: |
-          pyinstaller --noconfirm --onedir --windowed --add-data="assets${{ matrix.add_data_sep }}assets" --name="FocusFlow" main.py
+          pyinstaller --noconfirm --onedir --windowed --icon="${{ matrix.icon_path }}" --add-data="assets${{ matrix.add_data_sep }}assets" --name="FocusFlow" main.py
 
       # Compacta no Windows
       - name: Zip build artifact (Windows)
