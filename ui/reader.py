@@ -1491,11 +1491,25 @@ class StudyReaderView(QWidget):
     def load_next_sequential_block(self):
         db = SessionLocal()
         try:
-            next_block = StudyManager.get_next_block_to_study(db)
+            next_block = None
+            
+            # 1. Primeiro tenta buscar o próximo bloco do MESMO PDF (mesmo arquivo)
+            if self.current_pdf_id:
+                next_block = (
+                    db.query(StudyBlock)
+                    .join(Topic)
+                    .filter(
+                        Topic.pdf_id == self.current_pdf_id,
+                        StudyBlock.status.in_([BlockStatus.PENDENTE, BlockStatus.EM_ANDAMENTO]),
+                        StudyBlock.id != self.block_id  # Evita o bloco recém-concluído
+                    )
+                    .order_by(Topic.order.asc(), StudyBlock.page_start.asc())
+                    .first()
+                )
 
+            # 2. Se não houver mais blocos neste PDF, aí sim avisa e volta para o Dashboard/Ciclo
             if next_block:
                 next_id = next_block.id
-                
                 next_block.status = BlockStatus.EM_ANDAMENTO
                 if not next_block.started_at:
                     next_block.started_at = datetime.now(timezone.utc)
@@ -1507,10 +1521,11 @@ class StudyReaderView(QWidget):
                 db.close()
                 QMessageBox.information(
                     self,
-                    "Ciclo Concluído",
-                    "Parabéns! Você concluiu todos os blocos do seu ciclo de estudos."
+                    "PDF Concluído",
+                    "Você concluiu todos os blocos deste PDF! Voltando ao Dashboard para a próxima recomendação."
                 )
                 self.back_requested.emit()
+
         except Exception as e:
             if 'db' in locals():
                 db.rollback()

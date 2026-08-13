@@ -396,8 +396,20 @@ class DashboardView(QWidget):
             self.lbl_kpi_overall.setText(f"{overall_pct}%")
             self.lbl_kpi_time.setText(time_str)
 
-            # 3. Bloco Recomendado (Delegado para o StudyManager)
-            next_block = StudyManager.get_next_block_to_study(db)
+            # 3. Bloco Recomendado (Delegado para o StudyManager com last_subject_id explícito)
+            last_completed = (
+                db.query(PdfDocument.subject_id)
+                .join(Topic, Topic.pdf_id == PdfDocument.id)
+                .join(StudyBlock, StudyBlock.topic_id == Topic.id)
+                .filter(StudyBlock.status == BlockStatus.CONCLUIDO)
+                .order_by(StudyBlock.completed_at.desc(), StudyBlock.id.desc())
+                .first()
+            )
+            last_subj_id = last_completed[0] if last_completed else None
+
+            next_block = StudyManager.get_next_block_to_study(
+                db, last_subject_id=last_subj_id
+            )
             all_subjects_count = db.query(Subject).count()
 
             if (
@@ -571,6 +583,13 @@ class DashboardView(QWidget):
                 )
 
             if block:
+                # Transiciona status antes de iniciar
+                if block.status == BlockStatus.PENDENTE:
+                    block.status = BlockStatus.EM_ANDAMENTO
+                    if not block.started_at:
+                        block.started_at = datetime.now(timezone.utc)
+                    db.commit()
+
                 self.start_study_signal.emit(block.id)
             else:
                 QMessageBox.information(
@@ -578,9 +597,35 @@ class DashboardView(QWidget):
                     "Aviso",
                     "Não há blocos pendentes para esta matéria.",
                 )
+        except Exception as e:
+            db.rollback()
+            if config.DEBUG:
+                print(f"[{config.APP_NAME}] Erro ao iniciar estudo por matéria: {e}")
         finally:
             db.close()
 
     def on_start_clicked(self):
         if self.current_block_id:
-            self.start_study_signal.emit(self.current_block_id)
+            db = SessionLocal()
+            try:
+                block = (
+                    db.query(StudyBlock)
+                    .filter(StudyBlock.id == self.current_block_id)
+                    .first()
+                )
+                if block:
+                    if block.status == BlockStatus.PENDENTE:
+                        block.status = BlockStatus.EM_ANDAMENTO
+                        if not block.started_at:
+                            block.started_at = datetime.now(timezone.utc)
+                        db.commit()
+
+                    self.start_study_signal.emit(block.id)
+            except Exception as e:
+                db.rollback()
+                if config.DEBUG:
+                    print(
+                        f"[{config.APP_NAME}] Erro ao iniciar bloco recomendado: {e}"
+                    )
+            finally:
+                db.close()

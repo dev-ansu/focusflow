@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QHBoxLayout, QTreeWidget,
                              QTreeWidgetItem, QPushButton, QLabel, QMessageBox, 
                              QSpinBox, QComboBox, QFrame, QHeaderView,
                              QStyledItemDelegate, QLineEdit)
-from PySide6.QtGui import QIntValidator
+from PySide6.QtGui import QIntValidator, QShortcut, QKeySequence
 from PySide6.QtCore import Qt, Signal
 from database.connection import SessionLocal
 from models.models import PdfDocument, Topic
@@ -23,8 +23,10 @@ class MaxPageDelegate(QStyledItemDelegate):
 
 
 class TOCReviewView(QWidget):
-    completed = Signal()
-    back_requested = Signal()  # 👈 NOVO SINAL: Avisa que o usuário quer voltar para a importação
+    completed = Signal()         # Disparado quando todo o lote for salvo com sucesso
+    back_requested = Signal()    # Abortar/Voltar para a seleção de arquivos
+    prev_requested = Signal()    # Navegar para o PDF anterior
+    next_requested = Signal(dict) # Avançar para o próximo PDF transmitindo os dados em memória
 
     def __init__(self, file_path: str, subject_id: int, detected_topics: list):
         super().__init__()
@@ -32,6 +34,8 @@ class TOCReviewView(QWidget):
         self.subject_id = subject_id
         self.detected_topics = detected_topics
         
+        self.undo_stack = []
+
         try:
             self.pdf_info = PDFParser.get_info(self.file_path)
             self.total_pages = self.pdf_info.get("pages", 99999)
@@ -40,6 +44,11 @@ class TOCReviewView(QWidget):
             self.pdf_info = {}
 
         self.init_ui()
+        self.setup_shortcuts()
+
+    def setup_shortcuts(self):
+        self.shortcut_undo = QShortcut(QKeySequence("Ctrl+Z"), self)
+        self.shortcut_undo.activated.connect(self.undo_remove)
 
     def init_ui(self):
         self.setStyleSheet("background-color: #121418; color: #ECF0F1;")
@@ -76,23 +85,14 @@ class TOCReviewView(QWidget):
         header_text_layout.addWidget(self.lbl_subtitle)
         header_main_layout.addLayout(header_text_layout, stretch=1)
 
-        # 👈 NOVO BOTÃO DE VOLTAR NO CABEÇALHO
-        btn_back = QPushButton("⬅️ Voltar para Importação")
+        btn_back = QPushButton("📁 Cancelar Importação")
         btn_back.setCursor(Qt.PointingHandCursor)
         btn_back.setStyleSheet("""
             QPushButton {
-                background-color: #2C3E50;
-                color: #CDD6F4;
-                font-weight: bold;
-                padding: 8px 14px;
-                border: 1px solid #34495E;
-                border-radius: 6px;
-                font-size: 12px;
+                background-color: #2C3E50; color: #CDD6F4; font-weight: bold;
+                padding: 8px 14px; border: 1px solid #34495E; border-radius: 6px; font-size: 12px;
             }
-            QPushButton:hover {
-                background-color: #34495E;
-                color: #89B4FA;
-            }
+            QPushButton:hover { background-color: #34495E; color: #89B4FA; }
         """)
         btn_back.clicked.connect(self.back_requested.emit)
         header_main_layout.addWidget(btn_back, alignment=Qt.AlignRight | Qt.AlignVCenter)
@@ -106,7 +106,7 @@ class TOCReviewView(QWidget):
         toolbar_layout.setSpacing(8)
 
         self.txt_search = QLineEdit()
-        self.txt_search.setPlaceholderText("🔍 Filtrar e selecionar tópicos (ex: gabarito, questões, sumário)...")
+        self.txt_search.setPlaceholderText("🔍 Filtrar e selecionar tópicos...")
         self.txt_search.setStyleSheet("""
             QLineEdit {
                 background-color: #121418; color: #ECF0F1;
@@ -171,7 +171,7 @@ class TOCReviewView(QWidget):
 
         self.populate_tree()
 
-        # --- AÇÕES EM MASSA ---
+        # --- AÇÕES EM MASSA & EDICÃO ---
         tree_actions_layout = QHBoxLayout()
         
         btn_add = QPushButton("➕ Adicionar Tópico")
@@ -196,8 +196,32 @@ class TOCReviewView(QWidget):
         """)
         btn_remove_checked.clicked.connect(self.remove_checked_topics)
 
+        btn_undo = QPushButton("↩️ Desfazer (Ctrl+Z)")
+        btn_undo.setCursor(Qt.PointingHandCursor)
+        btn_undo.setStyleSheet("""
+            QPushButton {
+                background-color: #2C3E50; color: #E5C07B; font-weight: bold;
+                padding: 8px 12px; border-radius: 5px; border: 1px solid #34495E;
+            }
+            QPushButton:hover { background-color: #34495E; }
+        """)
+        btn_undo.clicked.connect(self.undo_remove)
+
+        btn_reset = QPushButton("🔄 Resetar Tópicos")
+        btn_reset.setCursor(Qt.PointingHandCursor)
+        btn_reset.setStyleSheet("""
+            QPushButton {
+                background-color: #2C3E50; color: #E06C75; font-weight: bold;
+                padding: 8px 12px; border-radius: 5px; border: 1px solid #34495E;
+            }
+            QPushButton:hover { background-color: #34495E; }
+        """)
+        btn_reset.clicked.connect(self.reset_topics)
+
         tree_actions_layout.addWidget(btn_add)
         tree_actions_layout.addWidget(btn_remove_checked)
+        tree_actions_layout.addWidget(btn_undo)
+        tree_actions_layout.addWidget(btn_reset)
         tree_actions_layout.addStretch()
         
         main_layout.addLayout(tree_actions_layout)
@@ -237,8 +261,24 @@ class TOCReviewView(QWidget):
         config_layout.addStretch()
         main_layout.addWidget(config_card)
 
-        # --- BOTÃO SALVAR ---
-        self.btn_confirm = QPushButton("🚀 Confirmar e Gerar Blocos")
+        # --- BARRA DE BOTÕES DE NAVEGAÇÃO E CONFIRMAÇÃO ---
+        nav_buttons_layout = QHBoxLayout()
+
+        self.btn_prev_pdf = QPushButton("⬅️ PDF Anterior")
+        self.btn_prev_pdf.setCursor(Qt.PointingHandCursor)
+        self.btn_prev_pdf.setEnabled(False)
+        self.btn_prev_pdf.setStyleSheet("""
+            QPushButton {
+                background-color: #34495E; color: white;
+                font-size: 14px; font-weight: bold; padding: 12px 20px; border-radius: 6px;
+            }
+            QPushButton:hover { background-color: #455A64; }
+            QPushButton:disabled { background-color: #1E222A; color: #555; }
+        """)
+        # 👈 Ação de voltar sem tocar no banco
+        self.btn_prev_pdf.clicked.connect(self.prev_requested.emit)
+
+        self.btn_confirm = QPushButton("🚀 Confirmar e Avançar")
         self.btn_confirm.setCursor(Qt.PointingHandCursor)
         self.btn_confirm.setStyleSheet("""
             QPushButton {
@@ -247,78 +287,28 @@ class TOCReviewView(QWidget):
             }
             QPushButton:hover { background-color: #2ECC71; }
         """)
-        self.btn_confirm.clicked.connect(self.save)
+        # 👈 Valida e repassa os dados em memória
+        self.btn_confirm.clicked.connect(self.handle_next_click)
+
+        nav_buttons_layout.addWidget(self.btn_prev_pdf)
+        nav_buttons_layout.addWidget(self.btn_confirm, stretch=1)
 
         self.tree.itemChanged.connect(self._on_item_changed)
-        
-        main_layout.addWidget(self.btn_confirm)
+        main_layout.addLayout(nav_buttons_layout)
 
-    def _on_item_changed(self, item, column):
-        """Disparado quando o usuário altera o valor de uma célula na tabela."""
-        # Só queremos recalcular em cadeia se a alteração for na Pág. Inicial (1) ou Pág. Final (2)
-        if column not in (1, 2):
-            return
+    def set_progress_info(self, current: int, total: int):
+        """Ajusta o estado visual dos botões e títulos conforme o item atual da fila."""
+        self.btn_prev_pdf.setEnabled(current > 1)
 
-        root = self.tree.invisibleRootItem()
-        item_index = root.indexOfChild(item)
-        if item_index == -1:
-            return
-
-        # Bloqueamos sinais temporariamente para evitar um loop infinito de alterações
-        self.tree.blockSignals(True)
-
-        try:
-            # 1. Valida e garante que o item editado possui números válidos
-            try:
-                p_start = int(item.text(1))
-            except ValueError:
-                p_start = 1
-
-            try:
-                p_end = int(item.text(2))
-            except ValueError:
-                p_end = p_start
-
-            # Ajusta limites do item atual
-            p_start = max(1, min(p_start, self.total_pages))
-            p_end = max(p_start, min(p_end, self.total_pages))
-            
-            item.setText(1, str(p_start))
-            item.setText(2, str(p_end))
-
-            # 2. Efeito Dominó: Recalcula todos os tópicos ABAIXO do que foi editado
-            current_next_start = p_end + 1
-
-            for i in range(item_index + 1, root.childCount()):
-                child_item = root.child(i)
-                
-                # Se já chegamos ou ultrapassamos o limite de páginas do PDF, trava o restante
-                if current_next_start > self.total_pages:
-                    child_item.setText(1, str(self.total_pages))
-                    child_item.setText(2, str(self.total_pages))
-                    continue
-
-                # Calcula o tamanho que esse bloco tinha originalmente (para tentar manter o mesmo número de páginas)
-                try:
-                    old_start = int(child_item.text(1))
-                    old_end = int(child_item.text(2))
-                    block_size = max(0, old_end - old_start)
-                except ValueError:
-                    block_size = 5  # tamanho padrão caso estivesse inválido
-
-                # Define o novo início e fim para este bloco filho
-                new_child_start = current_next_start
-                new_child_end = min(new_child_start + block_size, self.total_pages)
-
-                child_item.setText(1, str(new_child_start))
-                child_item.setText(2, str(new_child_end))
-
-                # Atualiza a página de início para o próximo irmão da lista
-                current_next_start = new_child_end + 1
-
-        finally:
-            # Reativa os sinais da TreeWidget
-            self.tree.blockSignals(False)
+        if total > 1:
+            self.lbl_subtitle.setText(
+                f"<span style='color: #3498DB; font-weight: bold;'>[PDF {current} de {total}]</span> "
+                f"Ajuste os tópicos (PDF com {self.total_pages} pág(s)). Nenhuma página pode exceder esse limite."
+            )
+            if current < total:
+                self.btn_confirm.setText(f"🚀 Confirmar e Ir para o Próximo PDF ({current}/{total}) ➔")
+            else:
+                self.btn_confirm.setText("🚀 Concluir e Finalizar Tudo")
 
     def populate_tree(self):
         self.tree.clear()
@@ -330,6 +320,127 @@ class TOCReviewView(QWidget):
             item.setFlags(item.flags() | Qt.ItemIsEditable | Qt.ItemIsUserCheckable)
             item.setCheckState(0, Qt.Unchecked)
             self.tree.addTopLevelItem(item)
+
+    def remove_checked_topics(self):
+        root = self.tree.invisibleRootItem()
+        items_to_remove = []
+        
+        for i in range(root.childCount()):
+            item = root.child(i)
+            if item.checkState(0) == Qt.Checked:
+                items_to_remove.append(item)
+
+        if not items_to_remove:
+            QMessageBox.information(self, "Aviso", "Nenhum tópico marcado para remoção.")
+            return
+
+        snapshot = []
+        for item in items_to_remove:
+            snapshot.append({
+                "title": item.text(0),
+                "p_start": item.text(1),
+                "p_end": item.text(2),
+                "index": root.indexOfChild(item)
+            })
+        self.undo_stack.append(snapshot)
+
+        self.txt_search.blockSignals(True)
+        self.txt_search.clear()
+        self.txt_search.blockSignals(False)
+
+        for item in items_to_remove:
+            root.removeChild(item)
+
+        for i in range(root.childCount()):
+            root.child(i).setHidden(False)
+
+    def undo_remove(self):
+        if not self.undo_stack:
+            return
+
+        last_removed = self.undo_stack.pop()
+        root = self.tree.invisibleRootItem()
+
+        self.tree.blockSignals(True)
+        try:
+            for data in last_removed:
+                item = QTreeWidgetItem([data["title"], data["p_start"], data["p_end"]])
+                item.setFlags(item.flags() | Qt.ItemIsEditable | Qt.ItemIsUserCheckable)
+                item.setCheckState(0, Qt.Unchecked)
+                
+                idx = min(data["index"], root.childCount())
+                root.insertChild(idx, item)
+        finally:
+            self.tree.blockSignals(False)
+
+    def reset_topics(self):
+        if self.tree.invisibleRootItem().childCount() > 0:
+            reply = QMessageBox.question(
+                self, "Confirmar Restauração",
+                "Deseja descartar as alterações feitas e restaurar a lista original de tópicos deste PDF?",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply != QMessageBox.Yes:
+                return
+
+        self.undo_stack.clear()
+        self.populate_tree()
+
+    def _on_item_changed(self, item, column):
+        if column not in (1, 2):
+            return
+
+        root = self.tree.invisibleRootItem()
+        item_index = root.indexOfChild(item)
+        if item_index == -1:
+            return
+
+        self.tree.blockSignals(True)
+
+        try:
+            try:
+                p_start = int(item.text(1))
+            except ValueError:
+                p_start = 1
+
+            try:
+                p_end = int(item.text(2))
+            except ValueError:
+                p_end = p_start
+
+            p_start = max(1, min(p_start, self.total_pages))
+            p_end = max(p_start, min(p_end, self.total_pages))
+            
+            item.setText(1, str(p_start))
+            item.setText(2, str(p_end))
+
+            current_next_start = p_end + 1
+
+            for i in range(item_index + 1, root.childCount()):
+                child_item = root.child(i)
+                
+                if current_next_start > self.total_pages:
+                    child_item.setText(1, str(self.total_pages))
+                    child_item.setText(2, str(self.total_pages))
+                    continue
+
+                try:
+                    old_start = int(child_item.text(1))
+                    old_end = int(child_item.text(2))
+                    block_size = max(0, old_end - old_start)
+                except ValueError:
+                    block_size = 5
+
+                new_child_start = current_next_start
+                new_child_end = min(new_child_start + block_size, self.total_pages)
+
+                child_item.setText(1, str(new_child_start))
+                child_item.setText(2, str(new_child_end))
+
+                current_next_start = new_child_end + 1
+
+        finally:
+            self.tree.blockSignals(False)
 
     def on_search_text_changed(self, text: str):
         query = text.strip().lower()
@@ -363,44 +474,10 @@ class TOCReviewView(QWidget):
         for i in range(root.childCount()):
             root.child(i).setCheckState(0, state)
 
-    def remove_checked_topics(self):
-        root = self.tree.invisibleRootItem()
-        items_to_remove = []
-        
-        for i in range(root.childCount()):
-            item = root.child(i)
-            if item.checkState(0) == Qt.Checked:
-                items_to_remove.append(item)
-
-        if not items_to_remove:
-            QMessageBox.information(self, "Aviso", "Nenhum tópico marcado para remoção.")
-            return
-
-        self.txt_search.blockSignals(True)
-        self.txt_search.clear()
-        self.txt_search.blockSignals(False)
-
-        for item in items_to_remove:
-            root.removeChild(item)
-
-        for i in range(root.childCount()):
-            root.child(i).setHidden(False)
-
     def _on_mode_changed(self, index: int):
         is_page_limit_mode = (index == 1)
         self.spn_pages.setEnabled(is_page_limit_mode)
         self.lbl_pages_per_block.setEnabled(is_page_limit_mode)
-
-    def set_progress_info(self, current: int, total: int):
-        if total > 1:
-            self.lbl_subtitle.setText(
-                f"<span style='color: #3498DB; font-weight: bold;'>[PDF {current} de {total}]</span> "
-                f"Ajuste os tópicos (PDF com {self.total_pages} pág(s)). Nenhuma página pode exceder esse limite."
-            )
-            if current < total:
-                self.btn_confirm.setText(f"🚀 Confirmar e Ir para o Próximo PDF ({current}/{total}) ➔")
-            else:
-                self.btn_confirm.setText("🚀 Concluir Importação em Lote")
 
     def add_topic(self):
         p_start = str(min(1, self.total_pages))
@@ -413,72 +490,90 @@ class TOCReviewView(QWidget):
         self.tree.setCurrentItem(item)
         self.tree.editItem(item, 0)
 
-    def save(self):
-        db = SessionLocal()
-        try:
-            info = self.pdf_info or PDFParser.get_info(self.file_path)
+    def get_current_data(self) -> dict:
+        """Extrai os dados da tela validando campos sem salvar no BD."""
+        root = self.tree.invisibleRootItem()
+        if root.childCount() == 0:
+            QMessageBox.warning(self, "Aviso", "Você precisa ter pelo menos um tópico cadastrado.")
+            return None
 
-            pdf_doc = PdfDocument(
-                subject_id=self.subject_id,
-                title=info.get("title", "Documento Sem Título"),
-                file_path=self.file_path,
-                file_size_bytes=info.get("size_bytes", 0),
-                total_pages=info.get("pages", self.total_pages)
-            )
-            db.add(pdf_doc)
-            db.flush()
+        parsed_topics = []
+        for i in range(root.childCount()):
+            item = root.child(i)
+            title = item.text(0).strip() or f"Tópico {i+1}"
+            str_start = item.text(1).strip()
+            str_end = item.text(2).strip()
 
-            mode_str = "topic" if self.cmb_mode.currentIndex() == 0 else "pages"
-            root = self.tree.invisibleRootItem()
-            
-            if root.childCount() == 0:
-                QMessageBox.warning(self, "Aviso", "Você precisa ter pelo menos um tópico cadastrado.")
-                db.rollback()
-                return
-
-            for i in range(root.childCount()):
-                item = root.child(i)
-                title = item.text(0).strip() or f"Tópico {i+1}"
-                
-                str_start = item.text(1).strip()
-                str_end = item.text(2).strip()
-
-                if not str_start.isdigit() or not str_end.isdigit():
-                    QMessageBox.warning(
-                        self, "Erro de Validação", 
-                        f"As páginas do tópico '{title}' devem ser números inteiros."
-                    )
-                    db.rollback()
-                    return
-
-                p_start = int(str_start)
-                p_end = int(str_end)
-
-                if p_start > self.total_pages or p_end > self.total_pages or p_start < 1 or p_end < 1 or p_start > p_end:
-                    QMessageBox.warning(
-                        self, "Erro de Validação", 
-                        f"Intervalo de páginas inválido no tópico '{title}'."
-                    )
-                    db.rollback()
-                    return
-
-                topic = Topic(
-                    pdf_id=pdf_doc.id,
-                    title=title,
-                    page_start=p_start,
-                    page_end=p_end
+            if not str_start.isdigit() or not str_end.isdigit():
+                QMessageBox.warning(
+                    self, "Erro de Validação", 
+                    f"As páginas do tópico '{title}' devem ser números inteiros."
                 )
-                db.add(topic)
+                return None
+
+            p_start = int(str_start)
+            p_end = int(str_end)
+
+            if p_start > self.total_pages or p_end > self.total_pages or p_start < 1 or p_end < 1 or p_start > p_end:
+                QMessageBox.warning(
+                    self, "Erro de Validação", 
+                    f"Intervalo de páginas inválido no tópico '{title}'."
+                )
+                return None
+
+            parsed_topics.append({
+                "title": title,
+                "page_start": p_start,
+                "page_end": p_end
+            })
+
+        return {
+            "file_path": self.file_path,
+            "subject_id": self.subject_id,
+            "info": self.pdf_info or PDFParser.get_info(self.file_path),
+            "topics": parsed_topics,
+            "mode": "topic" if self.cmb_mode.currentIndex() == 0 else "pages",
+            "pages_per_block": self.spn_pages.value()
+        }
+
+    def handle_next_click(self):
+        """Valida e emite o sinal com a estrutura em memória."""
+        data = self.get_current_data()
+        if data:
+            self.next_requested.emit(data)
+
+    @staticmethod
+    def save_batch_data(db, batch_data_list: list):
+        """Salva a lista completa acumulada de PDFs e seus blocos no banco de dados de uma só vez."""
+        try:
+            for data in batch_data_list:
+                info = data["info"]
+                pdf_doc = PdfDocument(
+                    subject_id=data["subject_id"],
+                    title=info.get("title", "Documento Sem Título"),
+                    file_path=data["file_path"],
+                    file_size_bytes=info.get("size_bytes", 0),
+                    total_pages=info.get("pages", 1)
+                )
+                db.add(pdf_doc)
                 db.flush()
 
-                StudyManager.create_blocks_for_topic(
-                    db, topic.id, mode=mode_str, pages_per_block=self.spn_pages.value()
-                )
+                for t_data in data["topics"]:
+                    topic = Topic(
+                        pdf_id=pdf_doc.id,
+                        title=t_data["title"],
+                        page_start=t_data["page_start"],
+                        page_end=t_data["page_end"]
+                    )
+                    db.add(topic)
+                    db.flush()
+
+                    StudyManager.create_blocks_for_topic(
+                        db, topic.id, mode=data["mode"], pages_per_block=data["pages_per_block"]
+                    )
 
             db.commit()
-            self.completed.emit()
+            return True
         except Exception as e:
             db.rollback()
-            QMessageBox.critical(self, "Erro ao Salvar", f"Não foi possível salvar a estrutura do PDF:\n{str(e)}")
-        finally:
-            db.close()
+            raise e
