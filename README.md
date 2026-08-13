@@ -16,15 +16,15 @@ Não é desenvolvedor ou não quer configurar o ambiente Python? Sem problemas! 
 
 <div align="center">
 
-[![Linux](https://img.shields.io/badge/Baixar_para-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/dev-ansu/focusflow/releases/latest/download/FocusFlow-Linux.tar.gz)
+[![Windows](https://img.shields.io/badge/Baixar_para-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/dev-ansu/focusflow/releases/latest/download/FocusFlow-Windows.zip)
 &nbsp;&nbsp;&nbsp;&nbsp;
-[![Windows](https://img.shields.io/badge/Baixar_para-Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/dev-ansu/focusflow/releases/latest/download/FocusFlow-Windows.zip)
+[![Linux](https://img.shields.io/badge/Baixar_para-Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/dev-ansu/focusflow/releases/latest/download/FocusFlow-Linux.tar.gz)
 
 </div>
 
 > 📌 **Como executar:**
-> * **Linux:** Baixe o arquivo `.tar.gz`, extraia a pasta e execute o binário `FocusFlow`.
 > * **Windows:** Baixe o arquivo `.zip`, extraia o conteúdo em uma pasta e dê dois cliques em `FocusFlow.exe`.
+> * **Linux:** Baixe o arquivo `.tar.gz`, extraia a pasta e execute o binário `FocusFlow`.
 
 ---
 
