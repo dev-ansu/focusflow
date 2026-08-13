@@ -396,20 +396,38 @@ class DashboardView(QWidget):
             self.lbl_kpi_overall.setText(f"{overall_pct}%")
             self.lbl_kpi_time.setText(time_str)
 
-            # 3. Bloco Recomendado (Delegado para o StudyManager com last_subject_id explícito)
+            # 3. Bloco Recomendado (Delegado para o StudyManager)
             last_completed = (
-                db.query(PdfDocument.subject_id)
+                db.query(PdfDocument.subject_id, StudyBlock.id, StudyBlock.completed_at)
                 .join(Topic, Topic.pdf_id == PdfDocument.id)
                 .join(StudyBlock, StudyBlock.topic_id == Topic.id)
                 .filter(StudyBlock.status == BlockStatus.CONCLUIDO)
                 .order_by(StudyBlock.completed_at.desc(), StudyBlock.id.desc())
                 .first()
             )
-            last_subj_id = last_completed[0] if last_completed else None
 
-            next_block = StudyManager.get_next_block_to_study(
-                db, last_subject_id=last_subj_id
-            )
+            print("\n" + "="*30)
+            print("🔍 DEBUG DO CICLO")
+            print("Último Bloco Concluído (Subject ID, Block ID, Completed At):", last_completed)
+
+            if last_completed:
+                last_subj_id = last_completed[0]
+                print(f"-> ID da Última Matéria Concluída: {last_subj_id}")
+            else:
+                last_subj_id = None
+                print("-> Nenhum bloco concluído foi encontrado no banco!")
+
+            # ATRIBUIÇÃO CORRETA DA VARIÁVEL EXPECTIDA NA TELA: next_block
+            next_block = StudyManager.get_next_block_to_study(db, last_subject_id=last_subj_id)
+            
+            if next_block:
+                print(f"-> Próximo Bloco Selecionado (ID): {next_block.id}")
+                print(f"-> Matéria do Próximo Bloco (Subject ID): {next_block.topic.pdf.subject_id}")
+            else:
+                print("-> Nenhum próximo bloco pendente foi retornado!")
+            print("="*30 + "\n")
+
+            # Exibição do Bloco Recomendado na UI
             all_subjects_count = db.query(Subject).count()
 
             if (

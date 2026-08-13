@@ -22,102 +22,77 @@ class StudyManager:
         db: Session, last_subject_id: Optional[int] = None
     ) -> Optional[StudyBlock]:
         """
-        Retorna o próximo bloco de estudo seguindo o Ciclo Inteligente:
-        1. Identifica a matéria do último bloco concluído (se não informada).
-        2. Busca as matérias com blocos pendentes ou em andamento.
-        3. Aplica a Rotação de Matérias: escolhe a matéria com menor número
-           de blocos concluídos, alternando em relação à última estudada.
-        4. Retorna o próximo bloco respeitando a sequência do sumário (Topic.order).
+        Retorna o próximo bloco de estudo seguindo o Ciclo Sequencial de Matérias:
+        1. Se houver bloco EM_ANDAMENTO, retoma ele.
+        2. Alterna para a PRÓXIMA matéria pendente na fila (Subject.order e Subject.id).
+        3. Pega o PRIMEIRO bloco PENDENTE da matéria selecionada.
         """
-        # 1. Identifica a matéria do último bloco concluído caso last_subject_id não venha informado
-        if last_subject_id is None:
-            last_completed = (
-                db.query(PdfDocument.subject_id)
-                .join(Topic, Topic.pdf_id == PdfDocument.id)
-                .join(StudyBlock, StudyBlock.topic_id == Topic.id)
-                .filter(StudyBlock.status == BlockStatus.CONCLUIDO)
-                .order_by(StudyBlock.completed_at.desc(), StudyBlock.id.desc())
-                .first()
+        # 1. Se existir algum bloco EM_ANDAMENTO, prioriza ele
+        in_progress_block = (
+            db.query(StudyBlock)
+            .join(Topic, StudyBlock.topic_id == Topic.id)
+            .join(PdfDocument, Topic.pdf_id == PdfDocument.id)
+            .join(Subject, PdfDocument.subject_id == Subject.id)
+            .filter(StudyBlock.status == BlockStatus.EM_ANDAMENTO)
+            .order_by(
+                Subject.order.asc(),
+                PdfDocument.id.asc(),
+                Topic.order.asc(),
+                StudyBlock.page_start.asc(),
+                StudyBlock.id.asc(),
             )
-            if last_completed:
-                last_subject_id = last_completed[0]
+            .first()
+        )
 
-        # 2. Busca IDs das matérias que possuem blocos elegíveis (PENDENTE ou EM_ANDAMENTO)
+        if in_progress_block:
+            return in_progress_block
+
+        # 2. Busca todas as matérias ordenadas que contêm pelo menos 1 bloco PENDENTE
         subjects_with_pending = (
-            db.query(Subject.id)
+            db.query(Subject)
             .join(PdfDocument, PdfDocument.subject_id == Subject.id)
             .join(Topic, Topic.pdf_id == PdfDocument.id)
             .join(StudyBlock, StudyBlock.topic_id == Topic.id)
-            .filter(
-                StudyBlock.status.in_([BlockStatus.PENDENTE, BlockStatus.EM_ANDAMENTO])
-            )
+            .filter(StudyBlock.status == BlockStatus.PENDENTE)
+            .order_by(Subject.order.asc(), Subject.id.asc())
             .distinct()
             .all()
         )
 
         if not subjects_with_pending:
-            return None  # Todos os blocos de todas as matérias foram concluídos!
+            return None  # Todos os blocos do sistema foram concluídos!
 
-        pending_subject_ids = [s[0] for s in subjects_with_pending]
+        target_subject = None
 
-        # 3. Define a matéria alvo aplicando a regra do ciclo
-        if len(pending_subject_ids) == 1:
-            target_subject_id = pending_subject_ids[0]
-        else:
-            # Subquery de contagem de concluídos por matéria
-            completed_counts_subquery = (
-                db.query(
-                    PdfDocument.subject_id.label("subject_id"),
-                    func.count(StudyBlock.id).label("completed_count"),
+        # 3. Avança para a PRÓXIMA matéria estritamente após last_subject_id
+        if last_subject_id is not None:
+            last_subj = db.query(Subject).filter(Subject.id == last_subject_id).first()
+            if last_subj:
+                # Procura a primeira matéria da fila com (order, id) estritamente maior que a anterior
+                target_subject = next(
+                    (
+                        s for s in subjects_with_pending 
+                        if (s.order, s.id) > (last_subj.order, last_subj.id)
+                    ),
+                    None
                 )
-                .join(Topic, Topic.pdf_id == PdfDocument.id)
-                .join(StudyBlock, StudyBlock.topic_id == Topic.id)
-                .filter(StudyBlock.status == BlockStatus.CONCLUIDO)
-                .group_by(PdfDocument.subject_id)
-                .subquery()
-            )
 
-            # Seleciona a matéria com menor número de concluídos e força a troca em relação a last_subject_id
-            target_subject = (
-                db.query(
-                    Subject.id,
-                    func.coalesce(
-                        completed_counts_subquery.c.completed_count, 0
-                    ).label("completed_count"),
-                    case((Subject.id == last_subject_id, 1), else_=0).label("is_last"),
-                )
-                .outerjoin(
-                    completed_counts_subquery,
-                    Subject.id == completed_counts_subquery.c.subject_id,
-                )
-                .filter(Subject.id.in_(pending_subject_ids))
-                .order_by(
-                    func.coalesce(
-                        completed_counts_subquery.c.completed_count, 0
-                    ).asc(),
-                    case((Subject.id == last_subject_id, 1), else_=0).asc(),  # Alterna a matéria
-                    Subject.id.asc(),
-                )
-                .first()
-            )
+        # Se last_subject_id era a última do ciclo (ou None), volta para a 1ª matéria pendente da fila
+        if not target_subject:
+            target_subject = subjects_with_pending[0]
 
-            target_subject_id = (
-                target_subject[0] if target_subject else pending_subject_ids[0]
-            )
-
-        # 4. Busca e retorna o próximo bloco da matéria escolhida
-        # (Dá prioridade a blocos EM_ANDAMENTO dentro da matéria escolhida e depois aos PENDENTES)
+        # 4. Retorna o primeiro bloco PENDENTE da matéria escolhida
         return (
             db.query(StudyBlock)
-            .select_from(StudyBlock)
             .join(Topic, StudyBlock.topic_id == Topic.id)
             .join(PdfDocument, Topic.pdf_id == PdfDocument.id)
+            .join(Subject, PdfDocument.subject_id == Subject.id)
             .filter(
-                PdfDocument.subject_id == target_subject_id,
-                StudyBlock.status.in_([BlockStatus.EM_ANDAMENTO, BlockStatus.PENDENTE]),
+                Subject.id == target_subject.id,
+                StudyBlock.status == BlockStatus.PENDENTE,
             )
             .order_by(
-                case((StudyBlock.status == BlockStatus.EM_ANDAMENTO, 0), else_=1).asc(),
+                PdfDocument.id.asc(),
                 Topic.order.asc(),
                 StudyBlock.page_start.asc(),
                 StudyBlock.id.asc(),
