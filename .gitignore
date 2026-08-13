@@ -25,3 +25,4 @@ ENV/
 export_code.py
 generate_bell_sound.py
 generate_icon.py
+.dev_data
