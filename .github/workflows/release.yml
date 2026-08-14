@@ -85,6 +85,7 @@ jobs:
 
       # Compilação com PyInstaller registrando o modulo release_config e a pasta config
       - name: Build executable with PyInstaller
+        shell: bash
         run: |
           pyinstaller --noconfirm --onedir --windowed \
             --hidden-import="googleapiclient.discovery" \

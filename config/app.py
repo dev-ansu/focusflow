@@ -75,7 +75,11 @@ class AppConfig:
     # 🔑 CHAVES E API TOKENS (Equivalente ao env('GDRIVE_CLIENT_ID'))
     GDRIVE_CLIENT_ID: str = field(default_factory=lambda: os.getenv("GDRIVE_CLIENT_ID", ""))
     GDRIVE_CLIENT_SECRET: str = field(default_factory=lambda: os.getenv("GDRIVE_CLIENT_SECRET", ""))
-    GDRIVE_SCOPES: str = field(default_factory=lambda: os.getenv("GDRIVE_SCOPES", ""))
+    GDRIVE_SCOPES: str = field(
+        default_factory=lambda: os.getenv(
+            "GDRIVE_SCOPES", "https://www.googleapis.com/auth/drive.appdata"
+        )
+    )
 
     # Atribui dinamicamente o ENV e DEBUG com base no ambiente
     @property
