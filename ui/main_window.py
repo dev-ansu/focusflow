@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, 
-    QPushButton, QStackedWidget, QMessageBox, QDialog, QLabel, QSpacerItem, QSizePolicy
+    QPushButton, QStackedWidget, QMessageBox, QDialog, QProgressDialog, QLabel, QSpacerItem, QSizePolicy
 )
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QShortcut, QKeySequence
@@ -19,11 +19,15 @@ from services.topic_parser import TopicParser
 from services.pdf_parser import PDFParser
 from config.app import config
 from database.connection import SessionLocal
+from services.gdrive_sync import GDriveSyncService
+from database.connection import engine 
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.gdrive_service = GDriveSyncService()
+        
         self.setWindowTitle(f"{config.APP_NAME} - v{config.APP_VERSION}")
         self.setMinimumSize(1024, 600)
         self.showMaximized()
@@ -297,6 +301,26 @@ class MainWindow(QMainWindow):
         self.batch_staged_data.clear()
         self.is_returning_to_import = True
         self.switch_view(4)
+
+    def closeEvent(self, event):
+        if self.gdrive_service.is_authenticated():
+            # Fecha todas as conexões ativas do SQLAlchemy com o SQLite antes de ler o arquivo
+            engine.dispose()
+            
+            # Cria uma tela/diálogo rápido de carregamento
+            progress = QProgressDialog("Sincronizando com o Google Drive...", None, 0, 0, self)
+            progress.setWindowModality(Qt.WindowModal)
+            progress.show()
+
+            # Envia em background ou de forma síncrona se for rápido (< 2s)
+            try:
+                self.gdrive_service.upload_database()
+            except Exception as e:
+                print(f"Erro ao salvar na nuvem antes de fechar: {e}")
+                
+            progress.close()
+
+        event.accept()
 
     # -------------------------------------------------------------
     # OUTROS MÉTODOS DA JANELA PRINCIPAL

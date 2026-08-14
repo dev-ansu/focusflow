@@ -1,6 +1,6 @@
 from pathlib import Path
 from typing import Any, Dict, Union
-import fitz  # PyMuPDF
+import pymupdf as fitz  # PyMuPDF
 
 from config.app import config
 

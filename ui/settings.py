@@ -1,19 +1,60 @@
 import os
 import shutil
-from datetime import datetime
+from datetime import datetime, timezone
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFileDialog, 
     QMessageBox, QLabel, QInputDialog, QGroupBox, QFrame, 
-    QScrollArea, QTableWidget, QTableWidgetItem, QHeaderView
+    QScrollArea, QTableWidget, QTableWidgetItem, QHeaderView,
+    QCheckBox
 )
-from PySide6.QtCore import Qt, Signal, QSettings
+from PySide6.QtCore import Qt, Signal, QSettings, QThread
+
 from services.backup_manager import BackupManager
-from database.connection import SessionLocal
+from database.connection import SessionLocal, engine
 from models.models import (
-    Subject, PdfDocument, Topic, StudyBlock, StudySession, 
+    Base, Subject, PdfDocument, Topic, StudyBlock, StudySession, 
     StudyCycle, Highlight, Note, QuestionError
 )
 from config.app import config
+from services.gdrive_sync import GDriveSyncService
+import time
+import os
+import shutil
+from pathlib import Path
+
+def safe_replace_file(src_path: str | Path, dst_path: str | Path, max_retries: int = 5, delay: float = 0.2):
+    """
+    Substitui um arquivo tentando repetidamente caso o Windows mantenha o lock no SQLite.
+    """
+    src = Path(src_path)
+    dst = Path(dst_path)
+
+    for attempt in range(max_retries):
+        try:
+            shutil.copy(src, dst)
+            return True
+        except PermissionError:
+            if attempt == max_retries - 1:
+                raise PermissionError(
+                    f"Não foi possível substituir o arquivo '{dst.name}'. "
+                    "O banco de dados ainda está em uso pelo sistema. Tente novamente."
+                )
+            time.sleep(delay)
+
+class OAuthWorker(QThread):
+    finished_signal = Signal(bool, str)
+
+    def __init__(self, gdrive_service):
+        super().__init__()
+        self.gdrive_service = gdrive_service
+
+    def run(self):
+        try:
+            success = self.gdrive_service.authenticate()
+            self.finished_signal.emit(success, "")
+        except Exception as e:
+            self.finished_signal.emit(False, str(e))
+
 
 class SettingsView(QWidget):
     app_reset = Signal()
@@ -21,20 +62,26 @@ class SettingsView(QWidget):
     def __init__(self):
         super().__init__()
         self.settings = QSettings(f"{config.APP_NAME}", "Preferences")
+        self.gdrive_service = GDriveSyncService()
         self.init_ui()
         self.refresh_stats()
         self.refresh_backups_table()
 
     def showEvent(self, event):
-        """Atualiza estatísticas e a tabela de backups ao visualizar a tela."""
         super().showEvent(event)
         self.refresh_stats()
         self.refresh_backups_table()
 
     def get_backup_folder(self) -> str:
-        """Retorna o diretório de backup configurado ou o padrão da aplicação."""
         default_dir = str(config.BACKUP_DIR)
-        return self.settings.value("custom_backup_dir", default_dir, type=str)
+        saved_dir = self.settings.value("custom_backup_dir", None, type=str)
+        
+        # Se o caminho salvo referenciar o projeto antigo 'estudoflow' ou não existir, reseta pro padrão
+        if saved_dir and ("estudoflow" in saved_dir or not os.path.exists(saved_dir)):
+            self.settings.remove("custom_backup_dir")
+            return default_dir
+
+        return saved_dir if saved_dir else default_dir
 
     def init_ui(self):
         self.setStyleSheet("""
@@ -63,7 +110,7 @@ class SettingsView(QWidget):
                 background-color: #313244;
                 color: #CDD6F4;
                 font-weight: bold;
-                padding: 8px 12px;
+                padding: 6px 12px;
                 border: 1px solid #45475A;
                 border-radius: 6px;
             }
@@ -86,7 +133,7 @@ class SettingsView(QWidget):
                 background-color: #F38BA8;
                 color: #11111B;
                 font-weight: bold;
-                padding: 10px;
+                padding: 8px 12px;
                 border: none;
                 border-radius: 6px;
             }
@@ -131,19 +178,50 @@ class SettingsView(QWidget):
         lbl_title.setStyleSheet("color: #89B4FA; font-size: 20px; font-weight: bold;")
         layout.addWidget(lbl_title)
 
-        # 2. STATUS DO ARMAZENAMENTO
+        # 2. SINCRONIZAÇÃO EM NUVEM (GOOGLE DRIVE APPDATA)
+        group_cloud = QGroupBox("☁️ Sincronização em Nuvem (Google Drive)")
+        cloud_layout = QVBoxLayout(group_cloud)
+        cloud_layout.setSpacing(10)
+
+        self.lbl_cloud_status = QLabel("Status: Desconectado")
+        self.lbl_cloud_status.setStyleSheet("color: #A6ADC8; font-size: 12px;")
+        cloud_layout.addWidget(self.lbl_cloud_status)
+
+        row_cloud_btns = QHBoxLayout()
+
+        self.btn_google_auth = QPushButton("🔑 Conectar Conta Google")
+        self.btn_google_auth.setProperty("class", "action-btn")
+        self.btn_google_auth.setCursor(Qt.PointingHandCursor)
+        self.btn_google_auth.clicked.connect(self.toggle_google_auth)
+
+        self.btn_cloud_upload = QPushButton("☁️ Enviando BD p/ Nuvem")
+        self.btn_cloud_upload.setProperty("class", "primary-btn")
+        self.btn_cloud_upload.setCursor(Qt.PointingHandCursor)
+        self.btn_cloud_upload.clicked.connect(self.upload_to_cloud)
+
+        self.btn_cloud_download = QPushButton("📲 Baixar BD da Nuvem")
+        self.btn_cloud_download.setProperty("class", "action-btn")
+        self.btn_cloud_download.setCursor(Qt.PointingHandCursor)
+        self.btn_cloud_download.clicked.connect(self.download_from_cloud)
+
+        row_cloud_btns.addWidget(self.btn_google_auth)
+        row_cloud_btns.addWidget(self.btn_cloud_upload)
+        row_cloud_btns.addWidget(self.btn_cloud_download)
+        cloud_layout.addLayout(row_cloud_btns)
+
+        layout.addWidget(group_cloud)
+        self.update_cloud_ui_state()
+
+        # 3. STATUS DO ARMAZENAMENTO
         group_stats = QGroupBox("📊 Resumo do Sistema & Banco de Dados")
         stats_layout = QHBoxLayout(group_stats)
         
         self.lbl_stat_subjects = QLabel("📚 Matérias: 0")
         self.lbl_stat_subjects.setProperty("class", "stat-card")
-        
         self.lbl_stat_pdfs = QLabel("📄 PDFs: 0")
         self.lbl_stat_pdfs.setProperty("class", "stat-card")
-
         self.lbl_stat_errors = QLabel("❌ Caderno de Erros: 0")
         self.lbl_stat_errors.setProperty("class", "stat-card")
-
         self.lbl_stat_notes = QLabel("📝 Anotações: 0")
         self.lbl_stat_notes.setProperty("class", "stat-card")
 
@@ -151,15 +229,13 @@ class SettingsView(QWidget):
         stats_layout.addWidget(self.lbl_stat_pdfs)
         stats_layout.addWidget(self.lbl_stat_errors)
         stats_layout.addWidget(self.lbl_stat_notes)
-
         layout.addWidget(group_stats)
 
-        # 3. GESTÃO DE BACKUPS & TABELA
+        # 4. GESTÃO DE BACKUPS & TABELA
         group_backup = QGroupBox("📦 Gestão de Backups")
         backup_layout = QVBoxLayout(group_backup)
         backup_layout.setSpacing(12)
 
-        # Diretório Atual de Backup
         dir_layout = QHBoxLayout()
         self.lbl_dir = QLabel(f"📂 Diretório Atual: {self.get_backup_folder()}")
         self.lbl_dir.setStyleSheet("color: #A6ADC8; font-size: 12px;")
@@ -173,15 +249,13 @@ class SettingsView(QWidget):
         dir_layout.addWidget(btn_change_dir)
         backup_layout.addLayout(dir_layout)
 
-        # Botões Principais de Backup
         row_btns = QHBoxLayout()
-        
         btn_create = QPushButton("⚡ Gerar Novo Backup Agora")
         btn_create.setProperty("class", "primary-btn")
         btn_create.setCursor(Qt.PointingHandCursor)
         btn_create.clicked.connect(self.create_backup)
 
-        btn_import = QPushButton("📥 Importar Backup (.zip)")
+        btn_import = QPushButton("📥 Importar Backup Externo (.zip)")
         btn_import.setProperty("class", "action-btn")
         btn_import.setCursor(Qt.PointingHandCursor)
         btn_import.clicked.connect(self.import_backup)
@@ -190,20 +264,20 @@ class SettingsView(QWidget):
         row_btns.addWidget(btn_import)
         backup_layout.addLayout(row_btns)
 
-        # Tabela de Backups Existentes
         self.table_backups = QTableWidget()
-        self.table_backups.setColumnCount(4)
-        self.table_backups.setHorizontalHeaderLabels(["Nome do Arquivo", "Data", "Tamanho", "Ação"])
-        self.table_backups.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.table_backups.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.table_backups.setColumnCount(5)
+        self.table_backups.setHorizontalHeaderLabels(["Origem", "Nome do Arquivo", "Data", "Tamanho", "Ações"])
+        self.table_backups.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.table_backups.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         self.table_backups.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
         self.table_backups.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        self.table_backups.setMinimumHeight(200)
+        self.table_backups.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
+        self.table_backups.setMinimumHeight(220)
 
         backup_layout.addWidget(self.table_backups)
         layout.addWidget(group_backup)
 
-        # 4. ZONA DE PERIGO
+        # 5. ZONA DE PERIGO
         group_danger = QGroupBox("⚠️ Zona de Perigo")
         group_danger.setStyleSheet("""
             QGroupBox {
@@ -219,7 +293,7 @@ class SettingsView(QWidget):
         """)
         danger_layout = QVBoxLayout(group_danger)
 
-        lbl_danger_info = QLabel("Apaga permanentemente todo o banco de dados: Matérias, PDFs, Caderno de Erros, Histórico e Grifos.")
+        lbl_danger_info = QLabel("Apaga permanentemente todo o banco de dados e arquivos locais: Matérias, PDFs, Caderno de Erros, Histórico e Grifos.")
         lbl_danger_info.setStyleSheet("color: #BAC2DE; font-size: 12px;")
         lbl_danger_info.setWordWrap(True)
         danger_layout.addWidget(lbl_danger_info)
@@ -236,7 +310,108 @@ class SettingsView(QWidget):
         scroll.setWidget(scroll_content)
         main_layout.addWidget(scroll)
 
-    # ---------------- LÓGICA DE DADOS & BACKUP ----------------
+    # ---------------- MÉTODOS DE INTEGRAÇÃO GOOGLE DRIVE ----------------
+
+    def update_cloud_ui_state(self):
+        """Atualiza os botões e labels conforme o status da autenticação Google."""
+        if self.gdrive_service.is_authenticated():
+            self.lbl_cloud_status.setText("Status: 🟢 Conectado ao Google Drive (AppData Folder Oculta)")
+            self.lbl_cloud_status.setStyleSheet("color: #A6E3A1; font-size: 12px; font-weight: bold;")
+            self.btn_google_auth.setText("🔴 Desconectar Conta")
+            self.btn_cloud_upload.setEnabled(True)
+            self.btn_cloud_download.setEnabled(True)
+        else:
+            self.lbl_cloud_status.setText("Status: ⚪ Desconectado (Seus dados estão salvos apenas neste PC)")
+            self.lbl_cloud_status.setStyleSheet("color: #A6ADC8; font-size: 12px;")
+            self.btn_google_auth.setText("🔑 Conectar Conta Google")
+            self.btn_cloud_upload.setEnabled(False)
+            self.btn_cloud_download.setEnabled(False)
+
+    def toggle_google_auth(self):
+        """Conecta ou desconecta a conta do Google sem travar a interface."""
+        if self.gdrive_service.is_authenticated():
+            self.gdrive_service.logout()
+            QMessageBox.information(self, "Desconectado", "Sua conta do Google foi desconectada com sucesso.")
+            self.update_cloud_ui_state()
+        else:
+            self.btn_google_auth.setEnabled(False)
+            self.btn_google_auth.setText("⏳ Aguardando Login no Navegador...")
+
+            self.oauth_thread = OAuthWorker(self.gdrive_service)
+            self.oauth_thread.finished_signal.connect(self._on_oauth_finished)
+            self.oauth_thread.start()
+
+    def _on_oauth_finished(self, success: bool, error_msg: str):
+        """Callback executado assim que a Thread do OAuth termina ou expira."""
+        if success:
+            QMessageBox.information(self, "Sucesso", f"Autenticação concluída! O {config.APP_NAME} agora pode sincronizar seus dados.")
+        elif error_msg:
+            QMessageBox.warning(self, "Login Não Concluído", f"{error_msg}")
+        else:
+            QMessageBox.warning(self, "Cancelado", "A autenticação foi interrompida.")
+
+        self.update_cloud_ui_state()
+
+    
+
+    def upload_to_cloud(self):
+        """Faz o envio manual do banco de dados local para a nuvem."""
+        db_path = str(config.DB_PATH)
+        if not os.path.exists(db_path):
+            QMessageBox.warning(self, "Aviso", "O arquivo de banco de dados local não foi encontrado.")
+            return
+
+        try:
+            self.gdrive_service.upload_database(db_path)
+            QMessageBox.information(self, "Nuvem Sincronizada", "Banco de dados enviado para o Google Drive com sucesso!")
+        except Exception as e:
+            QMessageBox.critical(self, "Erro na Sincronização", f"Falha ao enviar dados para a nuvem:\n{str(e)}")
+
+    def download_from_cloud(self):
+        """Baixa o banco de dados da nuvem e substitui o local com retentativa defensiva."""
+        confirm = QMessageBox.question(
+            self,
+            "Confirmar Download da Nuvem",
+            "Deseja substituir seus dados LOCAIS pela versão salva no Google Drive?\n\nEsta operação não pode ser desfeita.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if confirm == QMessageBox.Yes:
+            db_path = str(config.DB_PATH)
+            temp_download_path = f"{db_path}.tmp"
+
+            try:
+                # 1. Libera conexões do ORM/SQLAlchemy
+                engine.dispose()
+
+                # 2. Faz o download para um arquivo temporário primeiro
+                self.gdrive_service.download_database(temp_download_path)
+
+                # 3. Substitui com retentativas para evitar exceções do Windows PermissionError
+                safe_replace_file(temp_download_path, db_path)
+
+                # 4. Limpa o temporário
+                if os.path.exists(temp_download_path):
+                    os.remove(temp_download_path)
+
+                with SessionLocal() as db:
+                    db.expire_all()
+
+                self.refresh_stats()
+                self.refresh_backups_table()
+                self.app_reset.emit()
+                
+                QMessageBox.information(self, "Sucesso", "Banco de dados restaurado da nuvem com sucesso!")
+            except Exception as e:
+                if os.path.exists(temp_download_path):
+                    try:
+                        os.remove(temp_download_path)
+                    except Exception:
+                        pass
+                QMessageBox.critical(self, "Erro ao Baixar", f"Falha ao baixar dados da nuvem:\n{str(e)}")
+
+    # ---------------- LÓGICA DE DADOS & BACKUPS LOCAIS ----------------
 
     def refresh_stats(self):
         """Atualiza a contagem dos dados salvos no banco."""
@@ -250,7 +425,6 @@ class SettingsView(QWidget):
                 print(f"Erro ao carregar estatísticas: {e}")
 
     def select_custom_backup_folder(self):
-        """Permite que o usuário defina uma pasta personalizada de backups."""
         folder = QFileDialog.getExistingDirectory(self, "Selecionar Pasta de Backups", self.get_backup_folder())
         if folder:
             self.settings.setValue("custom_backup_dir", folder)
@@ -258,60 +432,107 @@ class SettingsView(QWidget):
             self.refresh_backups_table()
 
     def refresh_backups_table(self):
-        """Carrega e exibe os arquivos .zip contidos na pasta de backups."""
         backup_dir = self.get_backup_folder()
         os.makedirs(backup_dir, exist_ok=True)
 
-        files = [f for f in os.listdir(backup_dir) if f.endswith('.zip')]
-        files.sort(key=lambda f: os.path.getmtime(os.path.join(backup_dir, f)), reverse=True)
+        rows = []
 
-        # Alterado para 5 colunas para acomodar o botão de exclusão
-        self.table_backups.setColumnCount(5)
-        self.table_backups.setHorizontalHeaderLabels(["Nome do Arquivo", "Data", "Tamanho", "Download", "Ação"])
-        self.table_backups.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
-        self.table_backups.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        self.table_backups.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
-        self.table_backups.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)
-        self.table_backups.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)
-        
-        self.table_backups.setRowCount(len(files))
+        if os.path.exists(backup_dir):
+            for f in os.listdir(backup_dir):
+                if f.endswith('.zip'):
+                    path = os.path.join(backup_dir, f)
+                    stat = os.stat(path)
+                    dt_utc_naive = datetime.utcfromtimestamp(stat.st_mtime)
+                    rows.append({
+                        "origin": "💻 Local",
+                        "filename": f,
+                        "date": dt_utc_naive,
+                        "size": f"{stat.st_size / (1024 * 1024):.2f} MB",
+                        "path": path,
+                        "is_cloud": False
+                    })
 
-        for row, filename in enumerate(files):
-            file_path = os.path.join(backup_dir, filename)
-            stat = os.stat(file_path)
+        if self.gdrive_service.is_authenticated():
+            cloud_meta = self.gdrive_service.get_cloud_db_metadata()
+            if cloud_meta:
+                dt_iso = datetime.fromisoformat(cloud_meta['modifiedTime'].replace('Z', '+00:00'))
+                dt_utc_naive = dt_iso.astimezone(timezone.utc).replace(tzinfo=None)
+                
+                size_mb = f"{int(cloud_meta.get('size', 0)) / (1024 * 1024):.2f} MB"
+                rows.append({
+                    "origin": "☁️ Nuvem",
+                    "filename": f"{config.DB_NAME} (Snapshot Nuvem)",
+                    "date": dt_utc_naive,
+                    "size": size_mb,
+                    "path": None,
+                    "is_cloud": True
+                })
 
-            size_mb = f"{stat.st_size / (1024 * 1024):.2f} MB"
-            date_str = datetime.fromtimestamp(stat.st_mtime).strftime("%d/%m/%Y %H:%M")
+        rows.sort(key=lambda r: r["date"], reverse=True)
 
-            item_name = QTableWidgetItem(filename)
-            item_date = QTableWidgetItem(date_str)
-            item_size = QTableWidgetItem(size_mb)
+        self.table_backups.setRowCount(len(rows))
 
-            item_name.setFlags(item_name.flags() ^ Qt.ItemIsEditable)
-            item_date.setFlags(item_date.flags() ^ Qt.ItemIsEditable)
-            item_size.setFlags(item_size.flags() ^ Qt.ItemIsEditable)
+        for row, data in enumerate(rows):
+            item_origin = QTableWidgetItem(data["origin"])
+            item_name = QTableWidgetItem(data["filename"])
+            item_date = QTableWidgetItem(data["date"].strftime("%d/%m/%Y %H:%M"))
+            item_size = QTableWidgetItem(data["size"])
 
-            self.table_backups.setItem(row, 0, item_name)
-            self.table_backups.setItem(row, 1, item_date)
-            self.table_backups.setItem(row, 2, item_size)
+            if data["is_cloud"]:
+                item_origin.setForeground(Qt.green)
+            else:
+                item_origin.setForeground(Qt.cyan)
 
-            # Botão de Download
-            btn_download = QPushButton("💾 Baixar")
-            btn_download.setProperty("class", "action-btn")
-            btn_download.setCursor(Qt.PointingHandCursor)
-            btn_download.clicked.connect(lambda _, path=file_path: self.download_backup(path))
-            self.table_backups.setCellWidget(row, 3, btn_download)
+            self.table_backups.setItem(row, 0, item_origin)
+            self.table_backups.setItem(row, 1, item_name)
+            self.table_backups.setItem(row, 2, item_date)
+            self.table_backups.setItem(row, 3, item_size)
 
-            # Botão de Excluir Backup
-            btn_delete = QPushButton("🗑️ Apagar")
-            btn_delete.setProperty("class", "danger-btn")
-            btn_delete.setStyleSheet("padding: 4px 8px; font-size: 11px;")
-            btn_delete.setCursor(Qt.PointingHandCursor)
-            btn_delete.clicked.connect(lambda _, path=file_path, name=filename: self.delete_backup(path, name))
-            self.table_backups.setCellWidget(row, 4, btn_delete)
+            actions_widget = QWidget()
+            actions_layout = QHBoxLayout(actions_widget)
+            actions_layout.setContentsMargins(4, 2, 4, 2)
+
+            if data["is_cloud"]:
+                btn_restore = QPushButton("📲 Baixar da Nuvem")
+                btn_restore.clicked.connect(self.download_from_cloud)
+                actions_layout.addWidget(btn_restore)
+            else:
+                btn_restore = QPushButton("🔄")
+                btn_restore.clicked.connect(lambda _, p=data["path"]: self.restore_direct_backup(p))
+                btn_delete = QPushButton("🗑️")
+                btn_delete.clicked.connect(lambda _, p=data["path"], n=data["filename"]: self.delete_backup(p, n))
+                actions_layout.addWidget(btn_restore)
+                actions_layout.addWidget(btn_delete)
+
+            self.table_backups.setCellWidget(row, 4, actions_widget)
+
+    def restore_direct_backup(self, file_path: str):
+        confirm = QMessageBox.question(
+            self,
+            "Confirmar Restauração",
+            "Deseja substituir TODOS os seus dados atuais pelo conteúdo deste backup?\n\nEsta operação é irreversível.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if confirm == QMessageBox.Yes:
+            try:
+                # 1. Encerra as conexões com o SQLite
+                engine.dispose()
+                
+                # 2. Executa a importação tratada
+                BackupManager.import_backup(file_path)
+                
+                # 3. Força a atualização do estado da aplicação
+                self.refresh_stats()
+                self.refresh_backups_table()
+                self.app_reset.emit()
+                
+                QMessageBox.information(self, "Sucesso", "Backup restaurado com sucesso!")
+            except Exception as e:
+                QMessageBox.critical(self, "Erro na Restauração", f"Falha ao restaurar o backup:\n{str(e)}")
 
     def delete_backup(self, file_path: str, filename: str):
-        """Solicita confirmação e apaga permanentemente o arquivo de backup selecionado."""
         confirm = QMessageBox.question(
             self,
             "Confirmar Exclusão",
@@ -330,7 +551,6 @@ class SettingsView(QWidget):
                 QMessageBox.critical(self, "Erro", f"Falha ao apagar o arquivo: {str(e)}")
 
     def create_backup(self):
-        """Cria o arquivo ZIP e armazena na pasta de backups do sistema."""
         backup_dir = self.get_backup_folder()
         os.makedirs(backup_dir, exist_ok=True)
 
@@ -345,75 +565,93 @@ class SettingsView(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Erro", f"Falha ao gerar backup: {str(e)}")
 
-    def download_backup(self, source_path: str):
-        """Permite que o usuário salve uma cópia do backup em outro diretório."""
-        filename = os.path.basename(source_path)
-        dest_path, _ = QFileDialog.getSaveFileName(self, "Salvar Backup Como...", filename, "ZIP Files (*.zip)")
-        
-        if dest_path:
-            try:
-                shutil.copy2(source_path, dest_path)
-                QMessageBox.information(self, "Sucesso", "Backup salvo com sucesso na pasta selecionada!")
-            except Exception as e:
-                QMessageBox.critical(self, "Erro", f"Falha ao salvar o backup: {str(e)}")
-
     def import_backup(self):
-        """Restaura um arquivo de backup (.zip)."""
         path, _ = QFileDialog.getOpenFileName(self, "Selecionar Backup para Importar", "", "ZIP Files (*.zip)")
         if path:
-            try:
-                BackupManager.import_backup(path)
-                self.refresh_stats()
-                self.refresh_backups_table()
-                QMessageBox.information(self, "Sucesso", "Backup restaurado com sucesso!")
-            except Exception as e:
-                QMessageBox.critical(self, "Erro", f"Falha ao restaurar: {str(e)}")
+            self.restore_direct_backup(path)
+
+    
+
+    # ---------------- RESET DA APLICAÇÃO ----------------
 
     def reset_application(self):
-        confirm_1 = QMessageBox.warning(
-            self,
-            "⚠️ Atenção - Reset de Dados",
-            "Você tem certeza de que deseja apagar TODOS os dados do aplicativo?\n\n"
-            "Essa ação apagará permanentemente suas matérias, Caderno de Erros, histórico e grifos.",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
-        )
+        """Executa a remoção física de todo o diretório de dados, encerra sessões e opcionalmente limpa a nuvem."""
+        msg_box = QMessageBox(self)
+        msg_box.setIcon(QMessageBox.Warning)
+        msg_box.setWindowTitle("⚠️ Atenção - Reset de Dados")
+        msg_box.setText("Você tem certeza de que deseja apagar TODOS os dados do aplicativo?\n\n"
+                        "Essa ação apagará permanentemente o banco de dados local, a pasta de backups local, "
+                        "PDFs, caderno de erros, histórico e grifos.")
+        
+        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg_box.setDefaultButton(QMessageBox.No)
 
-        if confirm_1 != QMessageBox.Yes:
+        chk_delete_cloud = None
+        if self.gdrive_service.is_authenticated():
+            chk_delete_cloud = QCheckBox("Deseja também apagar a cópia de segurança armazenada no Google Drive?", msg_box)
+            chk_delete_cloud.setStyleSheet("color: #F38BA8; font-size: 12px; margin-top: 10px;")
+            msg_box.setCheckBox(chk_delete_cloud)
+
+        if msg_box.exec() != QMessageBox.Yes:
             return
+
+        should_delete_cloud = chk_delete_cloud.isChecked() if chk_delete_cloud else False
 
         text, ok = QInputDialog.getText(
             self,
             "🔒 Dupla Confirmação Exigida",
-            "Esta ação é IRREVERSÍVEL!\nPara confirmar o reset, digite a palavra RESETAR abaixo:"
+            "Esta ação é IRREVERSÍVEL!\nPara confirmar o reset local, digite a palavra RESETAR abaixo:"
         )
 
-        if ok and text.strip().upper() == "RESETAR":
-            with SessionLocal() as db:
-                try:
-                    db.query(QuestionError).delete()
-                    db.query(Highlight).delete()
-                    db.query(Note).delete()
-                    db.query(StudySession).delete()
-                    db.query(StudyBlock).delete()
-                    db.query(Topic).delete()
-                    db.query(PdfDocument).delete()
-                    db.query(StudyCycle).delete()
-                    db.query(Subject).delete()
-                    
-                    db.commit()
-
-                    self.refresh_stats()
-                    self.refresh_backups_table()
-                    self.app_reset.emit()
-
-                    QMessageBox.information(
-                        self, 
-                        "Aplicação Resetada", 
-                        f"Todos os dados foram excluídos com sucesso.\nO {config.APP_NAME} está limpo."
-                    )
-                except Exception as e:
-                    db.rollback()
-                    QMessageBox.critical(self, "Erro no Reset", f"Ocorreu uma falha ao limpar o banco: {str(e)}")
-        elif ok:
+        if not ok or text.strip().upper() != "RESETAR":
             QMessageBox.warning(self, "Reset Cancelado", "Palavra digitada incorretamente. A operação foi cancelada.")
+            return
+
+        # 1. Libera todas as conexões abertas com o SQLite para liberar os arquivos em disco
+        engine.dispose()
+
+        try:
+            # 2. Identifica a pasta raiz de dados (.dev_data em DEV ou APPDATA/XDG em PROD)
+            # Como a estrutura é DATA_DIR = root_data_dir / "data", o pai de DATA_DIR é a raiz do diretório do usuário/dev
+            root_data_folder = config.DATA_DIR.parent
+
+            # 3. Remove todo o diretório de dados local (inclui .db, PDFs, logs e .dev_data/backups)
+            if root_data_folder.exists():
+                shutil.rmtree(root_data_folder)
+
+            # 4. Recria as pastas essenciais (data, backups, logs)
+            config.ensure_directories_exist()
+
+            # 5. Recria as tabelas limpas no banco SQLite zerado
+            Base.metadata.create_all(bind=engine)
+
+            # 6. Apaga a cópia remota no Google Drive se solicitado
+            cloud_msg = ""
+            if should_delete_cloud:
+                if self.gdrive_service.delete_cloud_database():
+                    cloud_msg = "\n• O banco de dados no Google Drive também foi apagado."
+                else:
+                    cloud_msg = "\n• Houve uma falha ao tentar apagar o banco no Google Drive."
+
+            # 7. Desconecta o Google Drive localmente se estivesse autenticado
+            if self.gdrive_service.is_authenticated():
+                self.gdrive_service.logout()
+                cloud_msg += "\n• A sua conta do Google Drive foi desconectada."
+
+            # 8. Limpa as preferências locais no QSettings (inclusive caminhos customizados)
+            self.settings.clear()
+
+            # 9. Atualiza a interface da aba
+            self.lbl_dir.setText(f"📂 Diretório Atual: {self.get_backup_folder()}")
+            self.update_cloud_ui_state()
+            self.refresh_stats()
+            self.refresh_backups_table()
+            self.app_reset.emit()
+
+            QMessageBox.information(
+                self, 
+                "Aplicação Resetada", 
+                f"A pasta de dados local ({root_data_folder.name}) foi completamente limpa e redefinida.{cloud_msg}\n\nO {config.APP_NAME} está limpo."
+            )
+        except Exception as e:
+            QMessageBox.critical(self, "Erro no Reset", f"Ocorreu uma falha ao resetar a aplicação: {str(e)}")
