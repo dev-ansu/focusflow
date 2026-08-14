@@ -16,9 +16,9 @@ Não é desenvolvedor ou não quer configurar o ambiente Python? Sem problemas! 
 
 <div align="center">
 
-[![Windows](https://img.shields.io/badge/Baixar_para-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/dev-ansu/focusflow/releases/latest)
+[![Windows](https://img.shields.io/badge/Baixar_para-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/dev-ansu/focusflow/releases/latest/download/FocusFlow-Windows.zip)
 &nbsp;&nbsp;&nbsp;&nbsp;
-[![Linux](https://img.shields.io/badge/Baixar_para-Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/dev-ansu/focusflow/releases/latest)
+[![Linux](https://img.shields.io/badge/Baixar_para-Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black)](https://github.com/dev-ansu/focusflow/releases/latest/download/FocusFlow-Linux.tar.gz)
 
 </div>
 

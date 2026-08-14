@@ -1,13 +1,16 @@
 import os
 from typing import Optional
+from pathlib import Path
+from datetime import datetime, timezone
+
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaFileUpload, MediaIoBaseDownload
-from pathlib import Path
+
 from config.app import config
-from datetime import datetime, timezone
+
 
 class GDriveSyncService:
     def __init__(self):
@@ -57,16 +60,23 @@ class GDriveSyncService:
             return False
         
     def _load_credentials(self) -> None:
-        """Carrega o token existente e renova se necessário."""
+        """Carrega o token existente e renova se necessário, garantindo diretórios válidos."""
+        config.ensure_directories_exist()
+
         if self.token_path.exists():
-            self.creds = Credentials.from_authorized_user_file(str(self.token_path), self.scopes)
+            try:
+                self.creds = Credentials.from_authorized_user_file(str(self.token_path), self.scopes)
+            except Exception as e:
+                print(f"Erro ao ler arquivo de credenciais: {e}")
+                self.creds = None
 
         if self.creds and self.creds.expired and self.creds.refresh_token:
             try:
                 self.creds.refresh(Request())
                 with open(self.token_path, "w", encoding="utf-8") as token_file:
                     token_file.write(self.creds.to_json())
-            except Exception:
+            except Exception as e:
+                print(f"Falha ao renovar token do Google Drive: {e}")
                 self.creds = None
 
     def is_authenticated(self) -> bool:
@@ -77,11 +87,9 @@ class GDriveSyncService:
     def authenticate(self) -> bool:
         """Inicia o fluxo OAuth no navegador usando os dados em memória do config."""
         client_config = self._get_client_config()
-
         flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
 
         try:
-            # timeout_seconds=60: Se o usuário fechar a aba ou demorar mais de 1 min, lança uma exceção.
             self.creds = flow.run_local_server(
                 port=0,
                 timeout_seconds=60,
@@ -89,11 +97,10 @@ class GDriveSyncService:
             )
         except Exception as e:
             self.creds = None
-            # Re-lança a exceção com uma mensagem amigável para a Thread capturar
             raise TimeoutError("O login no navegador foi cancelado ou o tempo limite expirou.") from e
 
         if self.creds:
-            # Salva o token de sessão do usuário no DATA_DIR
+            config.ensure_directories_exist()
             with open(self.token_path, "w", encoding="utf-8") as token_file:
                 token_file.write(self.creds.to_json())
             return True
@@ -101,9 +108,13 @@ class GDriveSyncService:
         return False
 
     def logout(self) -> None:
-        """Remove a sessão do usuário desconectando do Google Drive."""
+        """Remove completamente a sessão local do usuário."""
         if self.token_path.exists():
-            self.token_path.unlink()
+            try:
+                self.token_path.unlink()
+            except Exception as e:
+                print(f"Erro ao deletar o arquivo token.json: {e}")
+
         self.creds = None
 
     def _get_drive_service(self):
@@ -129,7 +140,6 @@ class GDriveSyncService:
         if files:
             file_id = files[0]["id"]
 
-            # Checagem de segurança opcional: se não for forçado, valida modificação
             if not force:
                 remote_time_str = files[0].get("modifiedTime")
                 if remote_time_str:
@@ -167,14 +177,12 @@ class GDriveSyncService:
         file_id = files[0]["id"]
         request = service.files().get_media(fileId=file_id)
 
-        # 1. Escreve os bytes em um arquivo temporário
         with open(temp_db_path, "wb") as f:
             downloader = MediaIoBaseDownload(f, request)
             done = False
             while not done:
                 _, done = downloader.next_chunk()
 
-        # 2. Se o download foi com sucesso, substitui o arquivo original com segurança
         if temp_db_path.exists():
             temp_db_path.replace(db_file_path)
 

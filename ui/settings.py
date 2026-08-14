@@ -1,6 +1,9 @@
 import os
 import shutil
+import time
 from datetime import datetime, timezone
+from pathlib import Path
+
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFileDialog, 
     QMessageBox, QLabel, QInputDialog, QGroupBox, QFrame, 
@@ -17,10 +20,7 @@ from models.models import (
 )
 from config.app import config
 from services.gdrive_sync import GDriveSyncService
-import time
-import os
-import shutil
-from pathlib import Path
+
 
 def safe_replace_file(src_path: str | Path, dst_path: str | Path, max_retries: int = 5, delay: float = 0.2):
     """
@@ -40,6 +40,7 @@ def safe_replace_file(src_path: str | Path, dst_path: str | Path, max_retries: i
                     "O banco de dados ainda está em uso pelo sistema. Tente novamente."
                 )
             time.sleep(delay)
+
 
 class OAuthWorker(QThread):
     finished_signal = Signal(bool, str)
@@ -76,7 +77,6 @@ class SettingsView(QWidget):
         default_dir = str(config.BACKUP_DIR)
         saved_dir = self.settings.value("custom_backup_dir", None, type=str)
         
-        # Se o caminho salvo referenciar o projeto antigo 'estudoflow' ou não existir, reseta pro padrão
         if saved_dir and ("estudoflow" in saved_dir or not os.path.exists(saved_dir)):
             self.settings.remove("custom_backup_dir")
             return default_dir
@@ -331,8 +331,10 @@ class SettingsView(QWidget):
         """Conecta ou desconecta a conta do Google sem travar a interface."""
         if self.gdrive_service.is_authenticated():
             self.gdrive_service.logout()
+            self.gdrive_service = GDriveSyncService()  # Reinicializa o serviço limpo
             QMessageBox.information(self, "Desconectado", "Sua conta do Google foi desconectada com sucesso.")
             self.update_cloud_ui_state()
+            self.refresh_backups_table()
         else:
             self.btn_google_auth.setEnabled(False)
             self.btn_google_auth.setText("⏳ Aguardando Login no Navegador...")
@@ -351,8 +353,7 @@ class SettingsView(QWidget):
             QMessageBox.warning(self, "Cancelado", "A autenticação foi interrompida.")
 
         self.update_cloud_ui_state()
-
-    
+        self.refresh_backups_table()
 
     def upload_to_cloud(self):
         """Faz o envio manual do banco de dados local para a nuvem."""
@@ -364,6 +365,7 @@ class SettingsView(QWidget):
         try:
             self.gdrive_service.upload_database(db_path)
             QMessageBox.information(self, "Nuvem Sincronizada", "Banco de dados enviado para o Google Drive com sucesso!")
+            self.refresh_backups_table()
         except Exception as e:
             QMessageBox.critical(self, "Erro na Sincronização", f"Falha ao enviar dados para a nuvem:\n{str(e)}")
 
@@ -382,16 +384,10 @@ class SettingsView(QWidget):
             temp_download_path = f"{db_path}.tmp"
 
             try:
-                # 1. Libera conexões do ORM/SQLAlchemy
                 engine.dispose()
-
-                # 2. Faz o download para um arquivo temporário primeiro
                 self.gdrive_service.download_database(temp_download_path)
-
-                # 3. Substitui com retentativas para evitar exceções do Windows PermissionError
                 safe_replace_file(temp_download_path, db_path)
 
-                # 4. Limpa o temporário
                 if os.path.exists(temp_download_path):
                     os.remove(temp_download_path)
 
@@ -517,13 +513,9 @@ class SettingsView(QWidget):
 
         if confirm == QMessageBox.Yes:
             try:
-                # 1. Encerra as conexões com o SQLite
                 engine.dispose()
-                
-                # 2. Executa a importação tratada
                 BackupManager.import_backup(file_path)
                 
-                # 3. Força a atualização do estado da aplicação
                 self.refresh_stats()
                 self.refresh_backups_table()
                 self.app_reset.emit()
@@ -570,8 +562,6 @@ class SettingsView(QWidget):
         if path:
             self.restore_direct_backup(path)
 
-    
-
     # ---------------- RESET DA APLICAÇÃO ----------------
 
     def reset_application(self):
@@ -607,25 +597,17 @@ class SettingsView(QWidget):
             QMessageBox.warning(self, "Reset Cancelado", "Palavra digitada incorretamente. A operação foi cancelada.")
             return
 
-        # 1. Libera todas as conexões abertas com o SQLite para liberar os arquivos em disco
         engine.dispose()
 
         try:
-            # 2. Identifica a pasta raiz de dados (.dev_data em DEV ou APPDATA/XDG em PROD)
-            # Como a estrutura é DATA_DIR = root_data_dir / "data", o pai de DATA_DIR é a raiz do diretório do usuário/dev
             root_data_folder = config.DATA_DIR.parent
 
-            # 3. Remove todo o diretório de dados local (inclui .db, PDFs, logs e .dev_data/backups)
             if root_data_folder.exists():
                 shutil.rmtree(root_data_folder)
 
-            # 4. Recria as pastas essenciais (data, backups, logs)
             config.ensure_directories_exist()
-
-            # 5. Recria as tabelas limpas no banco SQLite zerado
             Base.metadata.create_all(bind=engine)
 
-            # 6. Apaga a cópia remota no Google Drive se solicitado
             cloud_msg = ""
             if should_delete_cloud:
                 if self.gdrive_service.delete_cloud_database():
@@ -633,15 +615,13 @@ class SettingsView(QWidget):
                 else:
                     cloud_msg = "\n• Houve uma falha ao tentar apagar o banco no Google Drive."
 
-            # 7. Desconecta o Google Drive localmente se estivesse autenticado
             if self.gdrive_service.is_authenticated():
                 self.gdrive_service.logout()
+                self.gdrive_service = GDriveSyncService()
                 cloud_msg += "\n• A sua conta do Google Drive foi desconectada."
 
-            # 8. Limpa as preferências locais no QSettings (inclusive caminhos customizados)
             self.settings.clear()
 
-            # 9. Atualiza a interface da aba
             self.lbl_dir.setText(f"📂 Diretório Atual: {self.get_backup_folder()}")
             self.update_cloud_ui_state()
             self.refresh_stats()

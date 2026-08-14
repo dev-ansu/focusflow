@@ -96,22 +96,22 @@ jobs:
             --add-data="config${{ matrix.add_data_sep }}config" \
             --name="FocusFlow-${{ steps.get_version.outputs.VERSION }}" main.py
 
-      # Compacta no Windows (ex: FocusFlow-v1.0.7-Windows.zip)
+      # Compacta no Windows gerando FocusFlow-Windows.zip (combina com o link do README)
       - name: Zip build artifact (Windows)
         if: runner.os == 'Windows'
         run: |
-          powershell Compress-Archive -Path dist/FocusFlow-${{ steps.get_version.outputs.VERSION }}/* -DestinationPath dist/FocusFlow-${{ steps.get_version.outputs.VERSION }}-Windows.zip
+          powershell Compress-Archive -Path dist/FocusFlow-${{ steps.get_version.outputs.VERSION }}/* -DestinationPath dist/FocusFlow-Windows.zip
 
-      # Compacta no Linux (ex: FocusFlow-v1.0.7-Linux.tar.gz)
+      # Compacta no Linux gerando FocusFlow-Linux.tar.gz (combina com o link do README)
       - name: Tar build artifact (Linux)
         if: runner.os == 'Linux'
         run: |
-          tar -czvf dist/FocusFlow-${{ steps.get_version.outputs.VERSION }}-Linux.tar.gz -C dist/FocusFlow-${{ steps.get_version.outputs.VERSION }} .
+          tar -czvf dist/FocusFlow-Linux.tar.gz -C dist/FocusFlow-${{ steps.get_version.outputs.VERSION }} .
 
-      # Publica os arquivos na Release do GitHub com o nome e a tag atualizada
+      # Publica os arquivos na Release do GitHub
       - name: Upload artifacts to Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/FocusFlow-${{ steps.get_version.outputs.VERSION }}-${{ matrix.os_name }}.${{ matrix.ext }}
+          files: dist/FocusFlow-${{ matrix.os_name }}.${{ matrix.ext }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
