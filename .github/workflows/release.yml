@@ -56,7 +56,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install pyinstaller PySide6 pymupdf sqlalchemy google-api-python-client google-auth-oauthlib python-dotenv
 
-      # Cria e injeta o arquivo de configuração de forma limpa e segura
+      # Cria e injeta o arquivo de configuração usando Base64 (sem texto puro no bytecode)
       - name: Inject Secrets and Version into App
         shell: bash
         env:
@@ -66,16 +66,19 @@ jobs:
         run: |
           mkdir -p config
           python -c "
-          import os
+          import os, base64
 
-          client_id = os.environ.get('GDRIVE_CLIENT_ID', '')
-          client_secret = os.environ.get('GDRIVE_CLIENT_SECRET', '')
+          raw_id = os.environ.get('GDRIVE_CLIENT_ID', '')
+          raw_secret = os.environ.get('GDRIVE_CLIENT_SECRET', '')
           app_version = os.environ.get('APP_VERSION', '1.0.0')
 
-          content = f'''import os
+          b64_id = base64.b64encode(raw_id.encode()).decode()
+          b64_secret = base64.b64encode(raw_secret.encode()).decode()
 
-          os.environ[\"GDRIVE_CLIENT_ID\"] = \"{client_id}\"
-          os.environ[\"GDRIVE_CLIENT_SECRET\"] = \"{client_secret}\"
+          content = f'''import os, base64
+
+          os.environ[\"GDRIVE_CLIENT_ID\"] = base64.b64decode(\"{b64_id}\").decode()
+          os.environ[\"GDRIVE_CLIENT_SECRET\"] = base64.b64decode(\"{b64_secret}\").decode()
           os.environ[\"APP_VERSION\"] = \"{app_version}\"
           '''
 
@@ -83,7 +86,7 @@ jobs:
               f.write(content)
           "
 
-      # Compilação com PyInstaller registrando o modulo release_config e a pasta config
+      # Compilação com PyInstaller (sem expor a pasta config)
       - name: Build executable with PyInstaller
         shell: bash
         run: |
@@ -95,17 +98,39 @@ jobs:
             --add-data="assets${{ matrix.add_data_sep }}assets" \
             --name="FocusFlow-${{ steps.get_version.outputs.VERSION }}" main.py
 
-      # Compacta no Windows gerando FocusFlow-Windows.zip (combina com o link do README)
+      # Compacta no Windows gerando FocusFlow-Windows.zip
       - name: Zip build artifact (Windows)
         if: runner.os == 'Windows'
         run: |
           powershell Compress-Archive -Path dist/FocusFlow-${{ steps.get_version.outputs.VERSION }}/* -DestinationPath dist/FocusFlow-Windows.zip
 
-      # Compacta no Linux gerando FocusFlow-Linux.tar.gz (combina com o link do README)
+      # Compacta no Linux garantindo o atalho .desktop com ícone e permissão de execução (+x)
       - name: Tar build artifact (Linux)
         if: runner.os == 'Linux'
         run: |
-          tar -czvf dist/FocusFlow-Linux.tar.gz -C dist/FocusFlow-${{ steps.get_version.outputs.VERSION }} .
+          APP_DIR="dist/FocusFlow-${{ steps.get_version.outputs.VERSION }}"
+          EXEC_NAME="FocusFlow-${{ steps.get_version.outputs.VERSION }}"
+          
+          # 1. Aplica permissão de execução no binário
+          chmod +x "$APP_DIR/$EXEC_NAME"
+
+          # 2. Gera o lançador .desktop configurado com o ícone png
+          cat <<EOF > "$APP_DIR/FocusFlow.desktop"
+          [Desktop Entry]
+          Version=1.0
+          Type=Application
+          Name=FocusFlow
+          Comment=Gerenciador de Ciclos de Estudos e Leitor de PDF
+          Exec=sh -c 'cd "\$(dirname "%k")" && ./"$EXEC_NAME"'
+          Icon=assets/icon.png
+          Terminal=false
+          Categories=Utility;Education;
+          EOF
+
+          chmod +x "$APP_DIR/FocusFlow.desktop"
+
+          # 3. Compacta a pasta inteira
+          tar -czvf dist/FocusFlow-Linux.tar.gz -C dist "FocusFlow-${{ steps.get_version.outputs.VERSION }}"
 
       # Publica os arquivos na Release do GitHub
       - name: Upload artifacts to Release
