@@ -93,7 +93,6 @@ jobs:
             --hidden-import="config.release_config" \
             --icon="${{ matrix.icon_path }}" \
             --add-data="assets${{ matrix.add_data_sep }}assets" \
-            --add-data="config${{ matrix.add_data_sep }}config" \
             --name="FocusFlow-${{ steps.get_version.outputs.VERSION }}" main.py
 
       # Compacta no Windows gerando FocusFlow-Windows.zip (combina com o link do README)
