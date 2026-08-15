@@ -106,28 +106,34 @@ jobs:
 
       # Compacta no Linux garantindo o atalho .desktop com suporte a ícones dinâmicos e permissão de execução (+x)
       # Compacta no Linux deixando apenas o .desktop na raiz e o restante no _internal
+      # Compacta no Linux com o executável e o .desktop na raiz, e o script em _internal
       - name: Tar build artifact (Linux)
         if: runner.os == 'Linux'
         run: |
           APP_DIR="dist/FocusFlow-${{ steps.get_version.outputs.VERSION }}"
           EXEC_NAME="FocusFlow-${{ steps.get_version.outputs.VERSION }}"
           
-          # 1. Move o executável gerado pelo PyInstaller para dentro da pasta _internal
-          mv "$APP_DIR/$EXEC_NAME" "$APP_DIR/_internal/$EXEC_NAME"
-          chmod +x "$APP_DIR/_internal/$EXEC_NAME"
+          # 1. Garante permissão de execução no executável (mantido na RAIZ da aplicação)
+          chmod +x "$APP_DIR/$EXEC_NAME"
 
-          # 2. Cria o script inicializador (FocusFlow.sh) dentro de _internal
+          # 2. Cria o script inicializador (FocusFlow.sh) DENTRO de _internal
           cat <<EOF > "$APP_DIR/_internal/FocusFlow.sh"
           #!/usr/bin/env bash
-          DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+          # Descobre o diretório raiz da aplicação (subindo um nível a partir de _internal)
+          INTERNAL_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+          BASE_DIR="\$(dirname "\$INTERNAL_DIR")"
+          
+          # Registra o ícone no sistema do usuário se não existir
           mkdir -p "\$HOME/.local/share/icons"
-          cp "\$DIR/assets/icon.png" "\$HOME/.local/share/icons/focusflow-app.png" 2>/dev/null || true
-          exec "\$DIR/$EXEC_NAME" "\$@"
+          cp "\$INTERNAL_DIR/assets/icon.png" "\$HOME/.local/share/icons/focusflow-app.png" 2>/dev/null || true
+          
+          # Executa o binário principal localizado na raiz
+          exec "\$BASE_DIR/$EXEC_NAME" "\$@"
           EOF
 
           chmod +x "$APP_DIR/_internal/FocusFlow.sh"
 
-          # 3. Gera o arquivo .desktop na RAIZ da pasta apontando para o script no _internal
+          # 3. Gera o lançador .desktop na RAIZ que chama o script dentro de _internal
           cat <<EOF > "$APP_DIR/FocusFlow.desktop"
           [Desktop Entry]
           Version=1.0
