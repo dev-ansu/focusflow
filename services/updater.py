@@ -132,16 +132,17 @@ def launch_updater_script_and_exit(extracted_dir: Path):
     current_os = platform.system().lower()
 
     # Localiza a subpasta extraída
-    items = list(extracted_dir.iterdir())
-    source_folder = items[0] if len(items) == 1 and items[0].is_dir() else extracted_dir
+    items = [p for p in extracted_dir.iterdir() if p.is_dir()]
+    source_folder = items[0] if len(items) == 1 else extracted_dir
 
     if current_os == "windows":
         script_path = extracted_dir / "update.bat"
-        exe_path = sys.executable
+        exe_path = app_dir / "FocusFlow.exe"
 
-        # Bat script para Windows: aguarda 2 segs, copia e reabre
+        # Bat script para Windows: aguarda 2s, limpa a pasta e copia a nova versão
         bat_content = f"""@echo off
 timeout /t 2 /nobreak > nul
+del /f /s /q "{app_dir}\\*" > nul 2>&1
 xcopy /E /Y /I "{source_folder}\\*" "{app_dir}"
 start "" "{exe_path}"
 del "%~f0"
@@ -152,16 +153,30 @@ del "%~f0"
         subprocess.Popen(["cmd.exe", "/c", str(script_path)], creationflags=subprocess.CREATE_NEW_CONSOLE)
 
     else:
-        # Bash script para Linux
+        # Script em Bash para Linux (O SEU TRECHO VEM AQUI)
         script_path = extracted_dir / "update.sh"
         sh_content = f"""#!/usr/bin/env bash
 sleep 2
+
+# Apaga arquivos velhos da pasta (preservando o diretório pai)
+rm -rf "{app_dir}"/* 2>/dev/null || true
+
+# Copia todo o conteúdo da versão nova
 cp -rf "{source_folder}"/* "{app_dir}/"
+
+# Garante as permissões de execução no executável principal e no script inicializador
 chmod +x "{app_dir}/FocusFlow"* 2>/dev/null || true
 if [ -f "{app_dir}/_internal/FocusFlow.sh" ]; then
     chmod +x "{app_dir}/_internal/FocusFlow.sh"
 fi
-nohup "{sys.executable}" > /dev/null 2>&1 &
+
+# Relança o app usando o lançador
+if [ -f "{app_dir}/_internal/FocusFlow.sh" ]; then
+    nohup "{app_dir}/_internal/FocusFlow.sh" > /dev/null 2>&1 &
+else
+    nohup "{app_dir}/FocusFlow" > /dev/null 2>&1 &
+fi
+
 rm "$0"
 """
         with open(script_path, "w", encoding="utf-8") as f:

@@ -104,16 +104,32 @@ jobs:
         run: |
           powershell Compress-Archive -Path dist/FocusFlow-${{ steps.get_version.outputs.VERSION }}/* -DestinationPath dist/FocusFlow-Windows.zip
 
-      # Compacta no Linux garantindo o atalho .desktop com suporte a ícones dinâmicos e permissão de execução (+x)
-      # Compacta no Linux deixando apenas o .desktop na raiz e o restante no _internal
-      # Compacta no Linux com o executável e o .desktop na raiz, e o script em _internal
+      # Compilação com PyInstaller (Nome fixo sem o sufixo da versão)
+      - name: Build executable with PyInstaller
+        shell: bash
+        run: |
+          pyinstaller --noconfirm --onedir --windowed \
+            --hidden-import="googleapiclient.discovery" \
+            --hidden-import="google_auth_oauthlib.flow" \
+            --hidden-import="config.release_config" \
+            --icon="${{ matrix.icon_path }}" \
+            --add-data="assets${{ matrix.add_data_sep }}assets" \
+            --name="FocusFlow" main.py
+
+      # Compacta no Windows gerando FocusFlow-Windows.zip
+      - name: Zip build artifact (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          powershell Compress-Archive -Path dist/FocusFlow/* -DestinationPath dist/FocusFlow-Windows.zip
+
+      # Compacta no Linux com nome fixo no executável
       - name: Tar build artifact (Linux)
         if: runner.os == 'Linux'
         run: |
-          APP_DIR="dist/FocusFlow-${{ steps.get_version.outputs.VERSION }}"
-          EXEC_NAME="FocusFlow-${{ steps.get_version.outputs.VERSION }}"
+          APP_DIR="dist/FocusFlow"
+          EXEC_NAME="FocusFlow"
           
-          # 1. Permissão de execução no executável principal (na raiz)
+          # 1. Permissão de execução no executável principal
           chmod +x "$APP_DIR/$EXEC_NAME"
 
           # 2. Script inicializador dentro de _internal
@@ -122,11 +138,9 @@ jobs:
           INTERNAL_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
           BASE_DIR="\$(dirname "\$INTERNAL_DIR")"
           
-          # Copia o ícone para a pasta de ícones do sistema do usuário
           mkdir -p "\$HOME/.local/share/icons"
           cp "\$INTERNAL_DIR/assets/icon.png" "\$HOME/.local/share/icons/focusflow-app.png" 2>/dev/null || true
           
-          # Conteúdo padrão do arquivo .desktop
           DESKTOP_CONTENT="[Desktop Entry]
           Version=1.0
           Type=Application
@@ -139,18 +153,15 @@ jobs:
           Categories=Utility;Education;
           Path=\$BASE_DIR"
 
-          # A) Adiciona ao Menu de Aplicativos do sistema
           mkdir -p "\$HOME/.local/share/applications"
           echo "\$DESKTOP_CONTENT" > "\$HOME/.local/share/applications/FocusFlow.desktop"
           chmod +x "\$HOME/.local/share/applications/FocusFlow.desktop"
 
-          # B) Descobre a pasta da Área de Trabalho (suporta português/inglês)
           DESKTOP_DIR="\$(xdg-user-dir DESKTOP 2>/dev/null || echo "\$HOME/Área de Trabalho")"
           if [ ! -d "\$DESKTOP_DIR" ]; then
               DESKTOP_DIR="\$HOME/Desktop"
           fi
 
-          # C) Cria o atalho direto na Área de Trabalho do usuário
           if [ -d "\$DESKTOP_DIR" ]; then
               SHORTCUT="\$DESKTOP_DIR/FocusFlow.desktop"
               echo "\$DESKTOP_CONTENT" > "\$SHORTCUT"
@@ -158,14 +169,13 @@ jobs:
               gio set "\$SHORTCUT" metadata::trusted true 2>/dev/null || true
           fi
 
-          # Executa o aplicativo
           cd "\$BASE_DIR"
           exec "\$BASE_DIR/$EXEC_NAME" "\$@"
           EOF
 
           chmod +x "$APP_DIR/_internal/FocusFlow.sh"
 
-          # 3. Lançador .desktop na raiz da pasta extraída
+          # 3. Lançador .desktop na raiz
           cat <<EOF > "$APP_DIR/FocusFlow.desktop"
           [Desktop Entry]
           Version=1.0
@@ -181,8 +191,8 @@ jobs:
 
           chmod +x "$APP_DIR/FocusFlow.desktop"
 
-          # 4. Compacta a pasta
-          tar -czvf dist/FocusFlow-Linux.tar.gz -C dist "FocusFlow-${{ steps.get_version.outputs.VERSION }}"
+          # 4. Compacta a pasta dist/FocusFlow
+          tar -czvf dist/FocusFlow-Linux.tar.gz -C dist FocusFlow
 
       # Publica os arquivos na Release do GitHub
       - name: Upload artifacts to Release
