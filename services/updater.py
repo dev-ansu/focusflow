@@ -8,6 +8,7 @@ import tempfile
 import requests
 from pathlib import Path
 from PySide6.QtCore import QThread, Signal
+from packaging.version import parse as parse_version
 
 GITHUB_REPO = "dev-ansu/focusflow"
 
@@ -33,8 +34,13 @@ class UpdateCheckerWorker(QThread):
 
     def run(self):
         try:
+            # Nota: Se quiser buscar apenas a última versão ESTÁVEL, mantenha /latest.
+            # Se quiser capturar pre-releases (como rc1) nos testes, use a API /releases e pegue a primeira (index 0).
             url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
-            headers = {"Accept": "application/vnd.github.v3+json"}
+            headers = {
+                "Accept": "application/vnd.github.v3+json",
+                "User-Agent": "FocusFlow-Desktop-App"
+            }
             response = requests.get(url, headers=headers, timeout=8)
 
             if response.status_code != 200:
@@ -42,8 +48,8 @@ class UpdateCheckerWorker(QThread):
                 return
 
             data = response.json()
-            latest_version = data.get("tag_name", "v0.0.0").lstrip("v")
-            current_version = get_current_version()
+            latest_version_str = data.get("tag_name", "v0.0.0").lstrip("v")
+            current_version_str = get_current_version()
 
             # Procura pelo artefato correspondente ao SO do usuário
             current_os = platform.system().lower()
@@ -61,11 +67,15 @@ class UpdateCheckerWorker(QThread):
                     asset_name = name
                     break
 
-            # Comparação simples semântica (pode-se ajustar conforme padrão)
+            # Converte as versões para objetos de versão semântica (SemVer)
+            latest_version = parse_version(latest_version_str)
+            current_version = parse_version(current_version_str)
+
+            # Comparação semântica correta (ex: 1.2.14 > 1.2.14-rc1 -> True)
             if latest_version > current_version and download_url:
-                self.finished_signal.emit(True, latest_version, download_url, asset_name)
+                self.finished_signal.emit(True, latest_version_str, download_url, asset_name)
             else:
-                self.finished_signal.emit(False, current_version, "", "")
+                self.finished_signal.emit(False, current_version_str, "", "")
 
         except Exception as e:
             self.error_signal.emit(f"Erro ao buscar atualizações: {str(e)}")
