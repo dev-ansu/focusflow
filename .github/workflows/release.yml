@@ -104,32 +104,44 @@ jobs:
         run: |
           powershell Compress-Archive -Path dist/FocusFlow-${{ steps.get_version.outputs.VERSION }}/* -DestinationPath dist/FocusFlow-Windows.zip
 
-      # Compacta no Linux garantindo o atalho .desktop com ícone e permissão de execução (+x)
+      # Compacta no Linux garantindo o atalho .desktop com suporte a ícones dinâmicos e permissão de execução (+x)
       - name: Tar build artifact (Linux)
         if: runner.os == 'Linux'
         run: |
           APP_DIR="dist/FocusFlow-${{ steps.get_version.outputs.VERSION }}"
           EXEC_NAME="FocusFlow-${{ steps.get_version.outputs.VERSION }}"
           
-          # 1. Aplica permissão de execução no binário
+          # 1. Aplica permissão de execução no binário principal
           chmod +x "$APP_DIR/$EXEC_NAME"
 
-          # 2. Gera o lançador .desktop configurado com o ícone png
+          # 2. Cria script auxiliar que instala o ícone no sistema e executa o app
+          cat <<EOF > "$APP_DIR/FocusFlow.sh"
+          #!/usr/bin/env bash
+          DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+          mkdir -p "\$HOME/.local/share/icons"
+          cp "\$DIR/_internal/assets/icon.png" "\$HOME/.local/share/icons/focusflow-app.png" 2>/dev/null || true
+          exec "\$DIR/$EXEC_NAME" "\$@"
+          EOF
+
+          chmod +x "$APP_DIR/FocusFlow.sh"
+
+          # 3. Gera o lançador .desktop apontando para o identificador do ícone do sistema
           cat <<EOF > "$APP_DIR/FocusFlow.desktop"
           [Desktop Entry]
           Version=1.0
           Type=Application
           Name=FocusFlow
+          Name[pt_BR]=FocusFlow
           Comment=Gerenciador de Ciclos de Estudos e Leitor de PDF
-          Exec=sh -c 'cd "\$(dirname "%k")" && ./"$EXEC_NAME"'
-          Icon=assets/icon.png
+          Exec=sh -c '"\$(dirname "%k")/FocusFlow.sh"'
+          Icon=focusflow-app
           Terminal=false
           Categories=Utility;Education;
           EOF
 
           chmod +x "$APP_DIR/FocusFlow.desktop"
 
-          # 3. Compacta a pasta inteira
+          # 4. Compacta a pasta inteira
           tar -czvf dist/FocusFlow-Linux.tar.gz -C dist "FocusFlow-${{ steps.get_version.outputs.VERSION }}"
 
       # Publica os arquivos na Release do GitHub
