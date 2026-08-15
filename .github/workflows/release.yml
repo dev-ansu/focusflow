@@ -105,27 +105,29 @@ jobs:
           powershell Compress-Archive -Path dist/FocusFlow-${{ steps.get_version.outputs.VERSION }}/* -DestinationPath dist/FocusFlow-Windows.zip
 
       # Compacta no Linux garantindo o atalho .desktop com suporte a ícones dinâmicos e permissão de execução (+x)
+      # Compacta no Linux deixando apenas o .desktop na raiz e o restante no _internal
       - name: Tar build artifact (Linux)
         if: runner.os == 'Linux'
         run: |
           APP_DIR="dist/FocusFlow-${{ steps.get_version.outputs.VERSION }}"
           EXEC_NAME="FocusFlow-${{ steps.get_version.outputs.VERSION }}"
           
-          # 1. Aplica permissão de execução no binário principal
-          chmod +x "$APP_DIR/$EXEC_NAME"
+          # 1. Move o executável gerado pelo PyInstaller para dentro da pasta _internal
+          mv "$APP_DIR/$EXEC_NAME" "$APP_DIR/_internal/$EXEC_NAME"
+          chmod +x "$APP_DIR/_internal/$EXEC_NAME"
 
-          # 2. Cria script auxiliar que instala o ícone no sistema e executa o app
-          cat <<EOF > "$APP_DIR/FocusFlow.sh"
+          # 2. Cria o script inicializador (FocusFlow.sh) dentro de _internal
+          cat <<EOF > "$APP_DIR/_internal/FocusFlow.sh"
           #!/usr/bin/env bash
           DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
           mkdir -p "\$HOME/.local/share/icons"
-          cp "\$DIR/_internal/assets/icon.png" "\$HOME/.local/share/icons/focusflow-app.png" 2>/dev/null || true
+          cp "\$DIR/assets/icon.png" "\$HOME/.local/share/icons/focusflow-app.png" 2>/dev/null || true
           exec "\$DIR/$EXEC_NAME" "\$@"
           EOF
 
-          chmod +x "$APP_DIR/FocusFlow.sh"
+          chmod +x "$APP_DIR/_internal/FocusFlow.sh"
 
-          # 3. Gera o lançador .desktop apontando para o identificador do ícone do sistema
+          # 3. Gera o arquivo .desktop na RAIZ da pasta apontando para o script no _internal
           cat <<EOF > "$APP_DIR/FocusFlow.desktop"
           [Desktop Entry]
           Version=1.0
@@ -133,7 +135,7 @@ jobs:
           Name=FocusFlow
           Name[pt_BR]=FocusFlow
           Comment=Gerenciador de Ciclos de Estudos e Leitor de PDF
-          Exec=sh -c '"\$(dirname "%k")/FocusFlow.sh"'
+          Exec=sh -c '"\$(dirname "%k")/_internal/FocusFlow.sh"'
           Icon=focusflow-app
           Terminal=false
           Categories=Utility;Education;
