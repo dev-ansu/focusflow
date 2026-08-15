@@ -71,26 +71,45 @@ class UpdateCheckerWorker(QThread):
             self.error_signal.emit(f"Erro ao buscar atualizações: {str(e)}")
 
 
-def download_and_prepare_update(download_url: str, progress_callback=None) -> Path:
+def download_and_prepare_update(download_url: str, progress_signal=None) -> Path:
     """
-    Baixa o pacote (.zip ou .tar.gz) da nuvem e extrai na pasta temporária do sistema.
+    Baixa o pacote (.zip ou .tar.gz) da nuvem em chunks e extrai na pasta temporária.
     """
     temp_dir = Path(tempfile.gettempdir()) / "focusflow_update"
     if temp_dir.exists():
         import shutil
-        shutil.rmtree(temp_dir)
+        shutil.rmtree(temp_dir, ignore_errors=True)
     temp_dir.mkdir(parents=True, exist_ok=True)
 
     archive_path = temp_dir / ("update.zip" if download_url.endswith(".zip") else "update.tar.gz")
 
-    response = requests.get(download_url, stream=True, timeout=30)
-    response.raise_for_status()
+    # User-Agent é obrigatório para evitar restrições de CDN do GitHub
+    headers = {
+        "User-Agent": "FocusFlow-Desktop-Updater",
+        "Accept": "application/octet-stream"
+    }
 
-    with open(archive_path, "wb") as f:
-        for chunk in response.iter_content(chunk_size=8192):
-            if chunk:
-                f.write(chunk)
+    # Timeout: 10s para conectar, 300s (5min) para ler a transferência inteira
+    try:
+        with requests.get(download_url, headers=headers, stream=True, timeout=(10, 300)) as response:
+            response.raise_for_status()
+            
+            total_size = int(response.headers.get('content-length', 0))
+            downloaded = 0
 
+            with open(archive_path, "wb") as f:
+                for chunk in response.iter_content(chunk_size=65536):  # Chunks de 64 KB
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if progress_signal and total_size > 0:
+                            percent = int((downloaded / total_size) * 100)
+                            progress_signal.emit(percent)
+
+    except (requests.exceptions.RequestException, IncompleteRead) as e:
+        raise RuntimeError(f"A conexão caiu durante o download da atualização. Tente novamente.\nDetalhes: {e}")
+
+    # Extração dos arquivos
     extracted_dir = temp_dir / "extracted"
     extracted_dir.mkdir(exist_ok=True)
 

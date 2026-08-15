@@ -46,6 +46,22 @@ def safe_replace_file(src_path: str | Path, dst_path: str | Path, max_retries: i
                 )
             time.sleep(delay)
 
+class DownloadWorker(QThread):
+    """Worker dedicado para baixar o arquivo sem travar a UI."""
+    progress_signal = Signal(int)
+    finished_signal = Signal(object)  # Path da pasta extraída
+    error_signal = Signal(str)
+
+    def __init__(self, download_url: str):
+        super().__init__()
+        self.download_url = download_url
+
+    def run(self):
+        try:
+            extracted_dir = download_and_prepare_update(self.download_url, self.progress_signal)
+            self.finished_signal.emit(extracted_dir)
+        except Exception as e:
+            self.error_signal.emit(str(e))
 
 class OAuthWorker(QThread):
     finished_signal = Signal(bool, str)
@@ -494,31 +510,37 @@ class SettingsView(QWidget):
         QMessageBox.warning(self, "Falha na Verificação", err_msg)
 
     def perform_update(self, download_url: str):
-        """Faz o download em lote do release e substitui os arquivos locais."""
         self.btn_check_update.setEnabled(False)
-        self.btn_check_update.setText("📥 Baixando pacote...")
+        self.btn_check_update.setText("📥 Baixando atualização (0%)...")
 
-        try:
-            # Baixa e descompacta na pasta TEMP
-            extracted_dir = download_and_prepare_update(download_url)
-            
+        self.downloader = DownloadWorker(download_url)
+        
+        # Atualiza o progresso visual no botão
+        self.downloader.progress_signal.connect(
+            lambda pct: self.btn_check_update.setText(f"📥 Baixando atualização ({pct}%)...")
+        )
+        
+        def on_success(extracted_dir):
             QMessageBox.information(
                 self,
                 "Pronto para Atualizar",
                 "O arquivo de atualização foi baixado com sucesso!\n\n"
                 "O FocusFlow será fechado agora para aplicar as alterações."
             )
-
-            # Encerra o banco de dados antes de reiniciar
-            engine.dispose()
-            
-            # Inicia o script de substituição e encerra a aplicação atual
+            try:
+                engine.dispose()
+            except NameError:
+                pass
             launch_updater_script_and_exit(extracted_dir)
 
-        except Exception as e:
+        def on_error(err):
             self.btn_check_update.setEnabled(True)
             self.btn_check_update.setText("🔎 Buscar Atualização")
-            QMessageBox.critical(self, "Erro no Download", f"Falha ao realizar a atualização:\n{str(e)}")
+            QMessageBox.critical(self, "Erro no Download", err)
+
+        self.downloader.finished_signal.connect(on_success)
+        self.downloader.error_signal.connect(on_error)
+        self.downloader.start()
 
 
     # ---------------- MÉTODOS DE INTEGRAÇÃO GOOGLE DRIVE ----------------
