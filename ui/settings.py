@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QFileDialog, 
     QMessageBox, QLabel, QInputDialog, QGroupBox, QFrame, 
     QScrollArea, QTableWidget, QTableWidgetItem, QHeaderView,
-    QCheckBox
+    QCheckBox, QTabWidget, QSpinBox
 )
 from PySide6.QtCore import Qt, Signal, QSettings, QThread
 
@@ -90,6 +90,32 @@ class SettingsView(QWidget):
                 color: #CDD6F4;
                 font-family: 'Segoe UI', system-ui, sans-serif;
             }
+            QTabWidget::pane {
+                border: 1px solid #313244;
+                border-radius: 8px;
+                background-color: #1E1E2E;
+                top: -1px;
+            }
+            QTabBar::tab {
+                background-color: #181825;
+                color: #A6ADC8;
+                padding: 8px 16px;
+                border: 1px solid #313244;
+                border-bottom: none;
+                border-top-left-radius: 6px;
+                border-top-right-radius: 6px;
+                margin-right: 4px;
+                font-weight: bold;
+            }
+            QTabBar::tab:selected {
+                background-color: #252637;
+                color: #89B4FA;
+                border-bottom: 2px solid #89B4FA;
+            }
+            QTabBar::tab:hover:!selected {
+                background-color: #313244;
+                color: #CDD6F4;
+            }
             QGroupBox {
                 color: #89B4FA;
                 font-weight: bold;
@@ -160,25 +186,39 @@ class SettingsView(QWidget):
                 font-weight: bold;
                 border: none;
             }
+            QSpinBox {
+                background-color: #181825;
+                color: #CDD6F4;
+                border: 1px solid #45475A;
+                border-radius: 4px;
+                padding: 4px;
+            }
         """)
 
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(16, 16, 16, 16)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.NoFrame)
-
-        scroll_content = QWidget()
-        layout = QVBoxLayout(scroll_content)
-        layout.setSpacing(16)
-
         # 1. TÍTULO
         lbl_title = QLabel("⚙️ Configurações & Preferências")
-        lbl_title.setStyleSheet("color: #89B4FA; font-size: 20px; font-weight: bold;")
-        layout.addWidget(lbl_title)
+        lbl_title.setStyleSheet("color: #89B4FA; font-size: 20px; font-weight: bold; margin-bottom: 8px;")
+        main_layout.addWidget(lbl_title)
 
-        # 2. SINCRONIZAÇÃO EM NUVEM (GOOGLE DRIVE APPDATA)
+        # 2. SISTEMA DE ABAS (QTabWidget)
+        self.tabs = QTabWidget()
+        
+        # --- ABA 1: Geral, Nuvem & Backups ---
+        tab_general = QWidget()
+        tab_general_layout = QVBoxLayout(tab_general)
+        
+        scroll_general = QScrollArea()
+        scroll_general.setWidgetResizable(True)
+        scroll_general.setFrameShape(QFrame.NoFrame)
+
+        scroll_content_general = QWidget()
+        layout_general = QVBoxLayout(scroll_content_general)
+        layout_general.setSpacing(16)
+
+        # Sincronização em Nuvem
         group_cloud = QGroupBox("☁️ Sincronização em Nuvem (Google Drive)")
         cloud_layout = QVBoxLayout(group_cloud)
         cloud_layout.setSpacing(10)
@@ -209,10 +249,9 @@ class SettingsView(QWidget):
         row_cloud_btns.addWidget(self.btn_cloud_download)
         cloud_layout.addLayout(row_cloud_btns)
 
-        layout.addWidget(group_cloud)
-        self.update_cloud_ui_state()
+        layout_general.addWidget(group_cloud)
 
-        # 3. STATUS DO ARMAZENAMENTO
+        # Status do Armazenamento
         group_stats = QGroupBox("📊 Resumo do Sistema & Banco de Dados")
         stats_layout = QHBoxLayout(group_stats)
         
@@ -229,9 +268,9 @@ class SettingsView(QWidget):
         stats_layout.addWidget(self.lbl_stat_pdfs)
         stats_layout.addWidget(self.lbl_stat_errors)
         stats_layout.addWidget(self.lbl_stat_notes)
-        layout.addWidget(group_stats)
+        layout_general.addWidget(group_stats)
 
-        # 4. GESTÃO DE BACKUPS & TABELA
+        # Gestão de Backups
         group_backup = QGroupBox("📦 Gestão de Backups")
         backup_layout = QVBoxLayout(group_backup)
         backup_layout.setSpacing(12)
@@ -275,9 +314,9 @@ class SettingsView(QWidget):
         self.table_backups.setMinimumHeight(220)
 
         backup_layout.addWidget(self.table_backups)
-        layout.addWidget(group_backup)
+        layout_general.addWidget(group_backup)
 
-        # 5. ZONA DE PERIGO
+        # Zona de Perigo
         group_danger = QGroupBox("⚠️ Zona de Perigo")
         group_danger.setStyleSheet("""
             QGroupBox {
@@ -304,17 +343,77 @@ class SettingsView(QWidget):
         btn_reset.clicked.connect(self.reset_application)
         danger_layout.addWidget(btn_reset)
 
-        layout.addWidget(group_danger)
-        layout.addStretch()
+        layout_general.addWidget(group_danger)
+        layout_general.addStretch()
 
-        scroll.setWidget(scroll_content)
-        main_layout.addWidget(scroll)
+        scroll_general.setWidget(scroll_content_general)
+        tab_general_layout.addWidget(scroll_general)
+
+        # --- ABA 2: Leitor PDF & Atalhos ---
+        tab_reader = QWidget()
+        tab_reader_layout = QVBoxLayout(tab_reader)
+
+        scroll_reader = QScrollArea()
+        scroll_reader.setWidgetResizable(True)
+        scroll_reader.setFrameShape(QFrame.NoFrame)
+
+        scroll_content_reader = QWidget()
+        layout_reader = QVBoxLayout(scroll_content_reader)
+        layout_reader.setSpacing(16)
+
+        # Mapeamento de Atalhos
+        shortcuts_group = QGroupBox("⌨️ Mapeamento de Atalhos (Leitor PDF)")
+        shortcuts_layout = QVBoxLayout(shortcuts_group)
+
+        shortcuts_data = [
+            ("Ctrl + F", "Abre a Busca Global (Command Palette)", "Global"),
+            ("F11", "Alterna Modo Foco (Oculta/Exibe painéis)", "Leitor"),
+            ("Escape", "Sair do Modo Foco", "Leitor"),
+            ("Seta Direita / PgDown", "Próxima Página", "Leitor"),
+            ("Seta Esquerda / PgUp", "Página Anterior", "Leitor"),
+            ("Ctrl + +", "Ampliar Zoom (Zoom In)", "Leitor"),
+            ("Ctrl + -", "Reduzir Zoom (Zoom Out)", "Leitor"),
+            ("Ctrl + D", "Alterna Modo Escuro / Claro (Inversão de Matriz)", "Leitor"),
+            ("1", "Seleciona cor de grifo: Amarelo (#FFFF00)", "Destaque"),
+            ("2", "Seleciona cor de grifo: Verde (#2ECC71)", "Destaque"),
+            ("3", "Seleciona cor de grifo: Azul (#3498DB)", "Destaque"),
+            ("4", "Seleciona cor de grifo: Rosa (#E91E63)", "Destaque"),
+        ]
+
+        table_shortcuts = QTableWidget()
+        table_shortcuts.setRowCount(len(shortcuts_data))
+        table_shortcuts.setColumnCount(3)
+        table_shortcuts.setHorizontalHeaderLabels(["Escopo", "Atalho", "Ação / Descrição"])
+        table_shortcuts.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        table_shortcuts.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        table_shortcuts.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        table_shortcuts.setSelectionMode(QTableWidget.NoSelection)
+        table_shortcuts.setEditTriggers(QTableWidget.NoEditTriggers)
+        table_shortcuts.setMinimumHeight(320)
+
+        for row, (key, desc, scope) in enumerate(shortcuts_data):
+            table_shortcuts.setItem(row, 0, QTableWidgetItem(scope))
+            table_shortcuts.setItem(row, 1, QTableWidgetItem(key))
+            table_shortcuts.setItem(row, 2, QTableWidgetItem(desc))
+
+        shortcuts_layout.addWidget(table_shortcuts)
+        layout_reader.addWidget(shortcuts_group)
+        layout_reader.addStretch()
+
+        scroll_reader.setWidget(scroll_content_reader)
+        tab_reader_layout.addWidget(scroll_reader)
+
+        # Adiciona as abas ao widget principal
+        self.tabs.addTab(tab_general, "⚙️ Geral e Backup")
+        self.tabs.addTab(tab_reader, "📖 Leitor e Atalhos")
+
+        main_layout.addWidget(self.tabs)
+        self.update_cloud_ui_state()
 
     # ---------------- MÉTODOS DE INTEGRAÇÃO GOOGLE DRIVE ----------------
 
     def update_cloud_ui_state(self):
         """Atualiza os botões e labels conforme o status da autenticação Google."""
-        # Garante que o botão volte a ficar clicável independente do estado
         self.btn_google_auth.setEnabled(True)
 
         if self.gdrive_service.is_authenticated():
@@ -334,7 +433,7 @@ class SettingsView(QWidget):
         """Conecta ou desconecta a conta do Google sem travar a interface."""
         if self.gdrive_service.is_authenticated():
             self.gdrive_service.logout()
-            self.gdrive_service = GDriveSyncService()  # Reinicializa o serviço limpo
+            self.gdrive_service = GDriveSyncService()
             self.update_cloud_ui_state()
             self.refresh_backups_table()
             QMessageBox.information(self, "Desconectado", "Sua conta do Google foi desconectada com sucesso.")
