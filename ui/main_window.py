@@ -28,7 +28,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.gdrive_service = GDriveSyncService()
         
-        self.setWindowTitle(f"{config.APP_NAME} - v{config.APP_VERSION}")
+        self.setWindowTitle(f"{config.APP_NAME} - {config.APP_VERSION}")
         self.setMinimumSize(1024, 600)
         self.showMaximized()
         self.resize(1100, 720)
