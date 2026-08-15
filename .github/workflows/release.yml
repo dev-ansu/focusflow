@@ -86,24 +86,6 @@ jobs:
               f.write(content)
           "
 
-      # Compilação com PyInstaller (sem expor a pasta config)
-      - name: Build executable with PyInstaller
-        shell: bash
-        run: |
-          pyinstaller --noconfirm --onedir --windowed \
-            --hidden-import="googleapiclient.discovery" \
-            --hidden-import="google_auth_oauthlib.flow" \
-            --hidden-import="config.release_config" \
-            --icon="${{ matrix.icon_path }}" \
-            --add-data="assets${{ matrix.add_data_sep }}assets" \
-            --name="FocusFlow-${{ steps.get_version.outputs.VERSION }}" main.py
-
-      # Compacta no Windows gerando FocusFlow-Windows.zip
-      - name: Zip build artifact (Windows)
-        if: runner.os == 'Windows'
-        run: |
-          powershell Compress-Archive -Path dist/FocusFlow-${{ steps.get_version.outputs.VERSION }}/* -DestinationPath dist/FocusFlow-Windows.zip
-
       # Compilação com PyInstaller (Nome fixo sem o sufixo da versão)
       - name: Build executable with PyInstaller
         shell: bash
