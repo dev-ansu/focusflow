@@ -90,14 +90,15 @@ class GDriveSyncService:
         flow = InstalledAppFlow.from_client_config(client_config, self.scopes)
 
         try:
+            # Aumentado para 300 segundos (5 minutos) para dar tempo de sobra ao usuário
             self.creds = flow.run_local_server(
                 port=0,
-                timeout_seconds=60,
+                timeout_seconds=300,
                 authorization_prompt_message="Conclua a autorização no seu navegador..."
             )
         except Exception as e:
             self.creds = None
-            raise TimeoutError("O login no navegador foi cancelado ou o tempo limite expirou.") from e
+            raise TimeoutError("O tempo para autorizar no navegador expirou ou a tentativa foi interrompida.") from e
 
         if self.creds:
             config.ensure_directories_exist()

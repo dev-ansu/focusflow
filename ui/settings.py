@@ -314,6 +314,9 @@ class SettingsView(QWidget):
 
     def update_cloud_ui_state(self):
         """Atualiza os botões e labels conforme o status da autenticação Google."""
+        # Garante que o botão volte a ficar clicável independente do estado
+        self.btn_google_auth.setEnabled(True)
+
         if self.gdrive_service.is_authenticated():
             self.lbl_cloud_status.setText("Status: 🟢 Conectado ao Google Drive (AppData Folder Oculta)")
             self.lbl_cloud_status.setStyleSheet("color: #A6E3A1; font-size: 12px; font-weight: bold;")
@@ -332,9 +335,9 @@ class SettingsView(QWidget):
         if self.gdrive_service.is_authenticated():
             self.gdrive_service.logout()
             self.gdrive_service = GDriveSyncService()  # Reinicializa o serviço limpo
-            QMessageBox.information(self, "Desconectado", "Sua conta do Google foi desconectada com sucesso.")
             self.update_cloud_ui_state()
             self.refresh_backups_table()
+            QMessageBox.information(self, "Desconectado", "Sua conta do Google foi desconectada com sucesso.")
         else:
             self.btn_google_auth.setEnabled(False)
             self.btn_google_auth.setText("⏳ Aguardando Login no Navegador...")
@@ -347,6 +350,13 @@ class SettingsView(QWidget):
         """Callback executado assim que a Thread do OAuth termina ou expira."""
         if success:
             QMessageBox.information(self, "Sucesso", f"Autenticação concluída! O {config.APP_NAME} agora pode sincronizar seus dados.")
+        elif "timeout" in error_msg.lower() or "timed out" in error_msg.lower() or "tempo limite" in error_msg.lower():
+            QMessageBox.warning(
+                self, 
+                "Tempo Esgotado ⏳", 
+                "O tempo para autorizar a conta no navegador expirou (limite de 5 min).\n\n"
+                "Para tentar novamente, basta clicar em 'Conectar Conta Google'."
+            )
         elif error_msg:
             QMessageBox.warning(self, "Login Não Concluído", f"{error_msg}")
         else:
