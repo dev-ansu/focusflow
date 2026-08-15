@@ -20,6 +20,11 @@ from models.models import (
 )
 from config.app import config
 from services.gdrive_sync import GDriveSyncService
+from services.updater import (
+    get_current_version, UpdateCheckerWorker, 
+    download_and_prepare_update, launch_updater_script_and_exit
+)
+from services.updater import is_frozen
 
 
 def safe_replace_file(src_path: str | Path, dst_path: str | Path, max_retries: int = 5, delay: float = 0.2):
@@ -218,6 +223,7 @@ class SettingsView(QWidget):
         layout_general = QVBoxLayout(scroll_content_general)
         layout_general.setSpacing(16)
 
+
         # Sincronização em Nuvem
         group_cloud = QGroupBox("☁️ Sincronização em Nuvem (Google Drive)")
         cloud_layout = QVBoxLayout(group_cloud)
@@ -407,8 +413,113 @@ class SettingsView(QWidget):
         self.tabs.addTab(tab_general, "⚙️ Geral e Backup")
         self.tabs.addTab(tab_reader, "📖 Leitor e Atalhos")
 
+        # Grupo de Atualizações
+        group_update = QGroupBox("🔄 Atualizações do Sistema")
+        update_layout = QVBoxLayout(group_update)
+
+ 
+        self.lbl_update_status = QLabel(f"Versão Atual instalada: v{get_current_version()}")
+        self.lbl_update_status.setStyleSheet("color: #A6ADC8; font-size: 12px;")
+
+        
+        update_layout.addWidget(self.lbl_update_status)
+        
+
+        self.btn_check_update = QPushButton("🔎 Buscar Atualização")
+
+        if not is_frozen():
+            self.lbl_update_status.setText(f"Versão Atual: v{get_current_version()} (Modo Dev - Código Fonte)")
+            self.btn_check_update.setToolTip("Atualizações automáticas funcionam apenas na versão final compilada (.exe / .tar.gz)")
+            
+        self.btn_check_update.setProperty("class", "primary-btn")
+        self.btn_check_update.setCursor(Qt.PointingHandCursor)
+        self.btn_check_update.clicked.connect(self.check_for_updates)
+
+        update_layout.addWidget(self.btn_check_update)
+        layout_general.addWidget(group_update)
+
         main_layout.addWidget(self.tabs)
         self.update_cloud_ui_state()
+
+    
+    def check_for_updates(self):
+
+        # Trava amigável se o dev clicar durante o desenvolvimento
+        if not is_frozen():
+            QMessageBox.warning(
+                self,
+                "Modo de Desenvolvimento",
+                "A atualização automática via aplicativo só está disponível nos executáveis compilados.\n\n"
+                "Em ambiente de desenvolvimento, utilize 'git pull' para atualizar o código."
+            )
+            return
+
+        """Inicia a checagem por atualizações sem travar a interface."""
+        self.btn_check_update.setEnabled(False)
+        self.btn_check_update.setText("⏳ Verificando no GitHub...")
+
+        self.updater_thread = UpdateCheckerWorker()
+        self.updater_thread.finished_signal.connect(self._on_update_check_finished)
+        self.updater_thread.error_signal.connect(self._on_update_check_error)
+        self.updater_thread.start()
+
+    def _on_update_check_finished(self, has_update: bool, latest_version: str, download_url: str, asset_name: str):
+        self.btn_check_update.setEnabled(True)
+        self.btn_check_update.setText("🔎 Buscar Atualização")
+
+        if not has_update:
+            QMessageBox.information(
+                self, 
+                "Aplicação Atualizada", 
+                f"Você já está utilizando a versão mais recente (v{latest_version})."
+            )
+            return
+
+        # Se houver atualização
+        reply = QMessageBox.question(
+            self,
+            "Nova Atualização Encontrada! 🎉",
+            f"A versão v{latest_version} já está disponível no GitHub.\n\n"
+            f"Deseja baixar e atualizar o aplicativo agora?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes
+        )
+
+        if reply == QMessageBox.Yes:
+            self.perform_update(download_url)
+
+    def _on_update_check_error(self, err_msg: str):
+        self.btn_check_update.setEnabled(True)
+        self.btn_check_update.setText("🔎 Buscar Atualização")
+        QMessageBox.warning(self, "Falha na Verificação", err_msg)
+
+    def perform_update(self, download_url: str):
+        """Faz o download em lote do release e substitui os arquivos locais."""
+        self.btn_check_update.setEnabled(False)
+        self.btn_check_update.setText("📥 Baixando pacote...")
+
+        try:
+            # Baixa e descompacta na pasta TEMP
+            extracted_dir = download_and_prepare_update(download_url)
+            
+            QMessageBox.information(
+                self,
+                "Pronto para Atualizar",
+                "O arquivo de atualização foi baixado com sucesso!\n\n"
+                "O FocusFlow será fechado agora para aplicar as alterações."
+            )
+
+            # Encerra o banco de dados antes de reiniciar
+            engine.dispose()
+            
+            # Inicia o script de substituição e encerra a aplicação atual
+            launch_updater_script_and_exit(extracted_dir)
+
+        except Exception as e:
+            self.btn_check_update.setEnabled(True)
+            self.btn_check_update.setText("🔎 Buscar Atualização")
+            QMessageBox.critical(self, "Erro no Download", f"Falha ao realizar a atualização:\n{str(e)}")
+
 
     # ---------------- MÉTODOS DE INTEGRAÇÃO GOOGLE DRIVE ----------------
 
