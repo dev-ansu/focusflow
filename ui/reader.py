@@ -4,345 +4,20 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, 
     QPushButton, QScrollArea, QMessageBox, QFrame, QCheckBox, QTextEdit, QProgressBar, QComboBox
 )
-from PySide6.QtGui import QImage, QPixmap, QPainter, QPen, QColor, QKeySequence, QShortcut
-from PySide6.QtCore import Qt, QTimer, QTime, Signal, QRect, QPoint, QUrl
+from PySide6.QtGui import QImage, QPixmap, QKeySequence, QShortcut
+from PySide6.QtCore import Qt, QTimer, QTime, Signal, QPoint, QUrl
 from PySide6.QtMultimedia import QSoundEffect
 
 from database.connection import SessionLocal
 from models.models import StudyBlock, BlockStatus, Topic, PdfDocument, Subject, Highlight, Note
 from services.study_manager import StudyManager
 
-from PySide6.QtWidgets import QDialog, QSpinBox, QFormLayout, QDialogButtonBox, QTreeWidget, QTreeWidgetItem
-
-class DraggablePostIt(QFrame):
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.drag_position = QPoint()
-        self.resizing = False
-        self.resize_edge = None
-        self.margin = 8  # Margem em pixels nas bordas para ativar o redimensionamento
-
-        # Define os limites de tamanho (Mínimo / Máximo)
-        self.setMinimumSize(200, 150)
-        self.setMaximumSize(500, 400)
-        self.setMouseTracking(True)  # Permite detectar a aproximação do cursor nas bordas
-
-    def keyPressEvent(self, event):
-        # Fecha o Post-it ao pressionar a tecla ESC
-        if event.key() == Qt.Key_Escape:
-            self.hide()
-            event.accept()
-        else:
-            super().keyPressEvent(event)
-
-    def _get_edge(self, pos):
-        """Identifica se o cursor do mouse está sobre uma borda para redimensionar."""
-        edge = 0
-        rect = self.rect()
-
-        if pos.x() <= self.margin:
-            edge |= 1  # Esquerda
-        elif pos.x() >= rect.width() - self.margin:
-            edge |= 2  # Direita
-
-        if pos.y() <= self.margin:
-            edge |= 4  # Topo
-        elif pos.y() >= rect.height() - self.margin:
-            edge |= 8  # Base
-
-        return edge
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            edge = self._get_edge(event.position().toPoint())
-            if edge != 0:
-                self.resizing = True
-                self.resize_edge = edge
-            else:
-                self.resizing = False
-                self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-            event.accept()
-
-    def mouseMoveEvent(self, event):
-        pos = event.position().toPoint()
-
-        # Altera o ícone do cursor ao passar pelas bordas
-        if not self.resizing and not (event.buttons() & Qt.LeftButton):
-            edge = self._get_edge(pos)
-            if edge in (3, 12):  # Esquerda/Direita pura
-                self.setCursor(Qt.SizeHorCursor)
-            elif edge in (5, 10):  # Topo/Base pura ou diagnonais
-                self.setCursor(Qt.SizeFDiagCursor)
-            elif edge in (6, 9):
-                self.setCursor(Qt.SizeBDiagCursor)
-            elif edge & (4 | 8):
-                self.setCursor(Qt.SizeVerCursor)
-            else:
-                self.setCursor(Qt.OpenHandCursor)
-            return
-
-        # Executa o Redimensionamento mantendo as restrições min/max
-        if self.resizing and (event.buttons() & Qt.LeftButton):
-            global_pos = event.globalPosition().toPoint()
-            geom = self.geometry()
-
-            if self.resize_edge & 2:  # Borda Direita
-                new_w = max(self.minimumWidth(), min(global_pos.x() - geom.left(), self.maximumWidth()))
-                geom.setWidth(new_w)
-
-            if self.resize_edge & 8:  # Borda Inferior
-                new_h = max(self.minimumHeight(), min(global_pos.y() - geom.top(), self.maximumHeight()))
-                geom.setHeight(new_h)
-
-            self.setGeometry(geom)
-            event.accept()
-
-        # Executa o Arraste simples se não estiver redimensionando
-        elif event.buttons() & Qt.LeftButton:
-            self.move(event.globalPosition().toPoint() - self.drag_position)
-            event.accept()
-
-    def mouseReleaseEvent(self, event):
-        self.resizing = False
-        self.setCursor(Qt.OpenHandCursor)
-        super().mouseReleaseEvent(event)
-
-
-class PomodoroSettingsDialog(QDialog):
-    def __init__(self, work_min=25, short_min=5, long_min=15, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle("⚙️ Configurações do Pomodoro")
-        self.setFixedWidth(280)
-        
-        self.setStyleSheet("""
-            QDialog {
-                background-color: #1E1E2E;
-                color: #CDD6F4;
-                font-family: 'Segoe UI', system-ui, sans-serif;
-            }
-            QLabel {
-                color: #CDD6F4;
-                font-size: 13px;
-            }
-            QSpinBox {
-                background-color: #181825;
-                color: #CDD6F4;
-                border: 1px solid #313244;
-                border-radius: 5px;
-                padding: 4px;
-                font-size: 13px;
-            }
-            QSpinBox::up-button, QSpinBox::down-button {
-                background-color: #313244;
-                border-radius: 2px;
-            }
-            QPushButton {
-                background-color: #313244;
-                color: #CDD6F4;
-                border: 1px solid #45475A;
-                border-radius: 5px;
-                padding: 6px 14px;
-                font-weight: 500;
-            }
-            QPushButton:hover {
-                background-color: #45475A;
-            }
-        """)
-
-        layout = QVBoxLayout(self)
-        form_layout = QFormLayout()
-        form_layout.setSpacing(10)
-
-        # Campos de minutos
-        self.sb_work = QSpinBox()
-        self.sb_work.setRange(1, 180)
-        self.sb_work.setValue(work_min)
-        self.sb_work.setSuffix(" min")
-
-        self.sb_short = QSpinBox()
-        self.sb_short.setRange(1, 60)
-        self.sb_short.setValue(short_min)
-        self.sb_short.setSuffix(" min")
-
-        self.sb_long = QSpinBox()
-        self.sb_long.setRange(1, 120)
-        self.sb_long.setValue(long_min)
-        self.sb_long.setSuffix(" min")
-
-        form_layout.addRow("🎯 Tempo de Foco:", self.sb_work)
-        form_layout.addRow("☕ Pausa Curta:", self.sb_short)
-        form_layout.addRow("🎉 Pausa Longa:", self.sb_long)
-
-        layout.addLayout(form_layout)
-
-        # Botões do Modal
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addSpacing(10)
-        layout.addWidget(buttons)
-
-    def get_values(self):
-        """Retorna os valores selecionados em minutos."""
-        return self.sb_work.value(), self.sb_short.value(), self.sb_long.value()
-
-
-class PDFSelectableLabel(QLabel):
-    area_selected = Signal(QRect)
-    point_clicked = Signal(QPoint)
-
-    def __init__(self, text=""):
-        super().__init__(text)
-        self.selection_start = None
-        self.selection_end = None
-        self.is_selecting = False
-        self.selected_color = "#FFFF00"
-        
-    def set_selection_color(self, hex_color: str):
-        self.selected_color = hex_color
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self.selection_start = event.position().toPoint()
-            self.selection_end = self.selection_start
-            self.is_selecting = True
-            self.update()
-
-    def mouseMoveEvent(self, event):
-        if self.is_selecting:
-            self.selection_end = event.position().toPoint()
-            self.update()
-
-    def mouseReleaseEvent(self, event):
-        if event.button() == Qt.LeftButton and self.is_selecting:
-            self.is_selecting = False
-            self.selection_end = event.position().toPoint()
-            
-            rect = QRect(self.selection_start, self.selection_end).normalized()
-            if rect.width() <= 5 and rect.height() <= 5:
-                self.point_clicked.emit(self.selection_start)
-            else:
-                self.area_selected.emit(rect)
-
-            self.selection_start = None
-            self.selection_end = None
-            self.update()
-
-    def paintEvent(self, event):
-        super().paintEvent(event)
-        if self.is_selecting and self.selection_start and self.selection_end:
-            painter = QPainter(self)
-            rect = QRect(self.selection_start, self.selection_end).normalized()
-            
-            fill_color = QColor(self.selected_color)
-            fill_color.setAlpha(80)
-            
-            painter.setPen(QPen(fill_color.darker(120), 1, Qt.PenStyle.SolidLine))
-            painter.setBrush(fill_color)
-            painter.drawRect(rect)
-
-
-class PDFOutlineTreeWidget(QTreeWidget):
-    page_requested = Signal(int)  # Emite o número da página (base 1)
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setHeaderHidden(True)
-        self.setAnimated(True)
-        self.setStyleSheet("""
-            QTreeWidget {
-                background-color: #181825;
-                color: #CDD6F4;
-                border: 1px solid #313244;
-                border-radius: 6px;
-                padding: 4px;
-                font-size: 12px;
-            }
-            QTreeWidget::item {
-                padding: 4px;
-                border-radius: 4px;
-            }
-            QTreeWidget::item:hover {
-                background-color: #313244;
-            }
-            QTreeWidget::item:selected {
-                background-color: #45475A;
-                color: #89B4FA;
-            }
-        """)
-        self.itemClicked.connect(self.on_item_clicked)
-
-    def load_db_topics(self, topics_list):
-        """
-        Carrega na árvore os tópicos cadastrados no Banco de Dados (criados via TOCReviewView).
-        `topics_list` deve ser uma lista de objetos Topic ou dicionários com 'title' e 'page_start'.
-        """
-        self.clear()
-
-        if not topics_list:
-            item = QTreeWidgetItem(self, ["Nenhum tópico cadastrado"])
-            item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
-            return
-
-        for t in topics_list:
-            title = getattr(t, 'title', t.get('title', 'Tópico sem título') if isinstance(t, dict) else 'Tópico sem título')
-            page = getattr(t, 'page_start', t.get('page_start', 1) if isinstance(t, dict) else 1)
-
-            tree_item = QTreeWidgetItem(self, [f"📌 {title} (p. {page})"])
-            tree_item.setData(0, Qt.UserRole, page)
-
-        self.expandToDepth(0)
-
-    def load_toc(self, toc_list):
-        """
-        Recebe a lista TOC no formato PyMuPDF: [[level, title, page], ...]
-        Garante parsing seguro e reconstrução hierárquica completa dos tópicos.
-        """
-        self.clear()
-        
-        valid_toc = []
-        if toc_list:
-            for item in toc_list:
-                if isinstance(item, (list, tuple)) and len(item) >= 2:
-                    level = item[0]
-                    title = item[1]
-                    page = item[2] if len(item) > 2 and item[2] is not None else 1
-                    valid_toc.append([level, title, page])
-
-        if not valid_toc:
-            item = QTreeWidgetItem(self, ["Nenhum sumário disponível"])
-            item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
-            return
-
-        parents = {0: self}
-
-        for item_data in valid_toc:
-            try:
-                level = int(item_data[0])
-                title = str(item_data[1]).strip() or "Tópico sem título"
-                raw_page = item_data[2]
-                page = 1 if raw_page is None else int(raw_page)
-            except (ValueError, TypeError, IndexError):
-                continue
-
-            page = max(1, page)
-
-            target_level = level - 1
-            while target_level > 0 and target_level not in parents:
-                target_level -= 1
-
-            parent = parents.get(target_level, self)
-
-            tree_item = QTreeWidgetItem(parent, [f"{title} (p. {page})"])
-            tree_item.setData(0, Qt.UserRole, page)
-            parents[level] = tree_item
-
-        self.expandToDepth(0)
-
-    def on_item_clicked(self, item, column):
-        page = item.data(0, Qt.UserRole)
-        if page is not None and isinstance(page, int):
-            self.page_requested.emit(page)
+# Imports dos módulos refatorados
+from ui.components.reader.utils import extract_page_chars
+from ui.components.reader.widgets.draggable_postit import DraggablePostIt
+from ui.components.reader.widgets.pdf_selectable_label import PDFSelectableLabel
+from ui.components.reader.widgets.pdf_outline_tree import PDFOutlineTreeWidget
+from ui.components.reader.dialogs.pomodoro_settings import PomodoroSettingsDialog
 
 
 class StudyReaderView(QWidget):
@@ -375,7 +50,6 @@ class StudyReaderView(QWidget):
         self.timer.timeout.connect(self.update_timer)
         self.elapsed_seconds = 0
 
-        # Estados do Modo
         self.timer_mode = "STOPWATCH"
         self.work_duration = 25 * 60
         self.short_break = 5 * 60
@@ -384,14 +58,13 @@ class StudyReaderView(QWidget):
         self.pomodoro_remaining = self.work_duration
         self.pomodoros_completed = 0
 
-        # Alerta Sonoro
         self.alarm_sound = QSoundEffect(self)
         self.alarm_sound.setSource(QUrl.fromLocalFile("assets/sounds/bell.wav"))
         self.alarm_sound.setVolume(0.8)
 
         self.setup_shortcuts()
         self.init_ui()
-        
+
     def setup_shortcuts(self):
         QShortcut(QKeySequence("Right"), self, self.next_page)
         QShortcut(QKeySequence("PageDown"), self, self.next_page)
@@ -405,6 +78,8 @@ class StudyReaderView(QWidget):
         QShortcut(QKeySequence("F11"), self, self.toggle_focus_mode)
         QShortcut(QKeySequence("Escape"), self, self.exit_focus_mode)
         QShortcut(QKeySequence("Ctrl+N"), self, self.toggle_floating_note)
+
+        QShortcut(QKeySequence("Ctrl+Z"), self, self.undo_last_highlight)
 
         QShortcut(QKeySequence("1"), self, lambda: self.set_highlight_color("#FFFF00"))
         QShortcut(QKeySequence("2"), self, lambda: self.set_highlight_color("#2ECC71"))
@@ -451,7 +126,7 @@ class StudyReaderView(QWidget):
             }
         """)
 
-        # --- POST-IT FLUTUANTE (MODO FOCO / ACESSO RÁPIDO) ---
+        # --- POST-IT FLUTUANTE ---
         self.postit_frame = DraggablePostIt(self)
         self.postit_frame.setObjectName("PostItFrame")
         self.postit_frame.resize(260, 220) 
@@ -487,7 +162,6 @@ class StudyReaderView(QWidget):
         postit_layout.setContentsMargins(8, 6, 8, 8)
         postit_layout.setSpacing(6)
 
-        # Cabeçalho do Post-it
         postit_header = QHBoxLayout()
         lbl_postit_title = QLabel("📌 Nota Rápida")
         btn_close_postit = QPushButton("✕")
@@ -499,7 +173,6 @@ class StudyReaderView(QWidget):
         postit_header.addWidget(btn_close_postit)
         postit_layout.addLayout(postit_header)
 
-        # Campo de texto do Post-it
         self.txt_postit_notes = QTextEdit()
         self.txt_postit_notes.setPlaceholderText("Digite aqui sua nota...")
         self.txt_postit_notes.textChanged.connect(self.on_postit_text_changed)
@@ -573,7 +246,7 @@ class StudyReaderView(QWidget):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
-        # === PAINEL LATERAL ESQUERDO (SUMÁRIO / TOC) ===
+        # === PAINEL LATERAL ESQUERDO ===
         self.left_sidebar = QFrame()
         self.left_sidebar.setFixedWidth(240)
         self.left_sidebar.setVisible(False)
@@ -638,7 +311,6 @@ class StudyReaderView(QWidget):
         bottom_layout.setContentsMargins(8, 4, 8, 4)
         bottom_layout.setSpacing(6)
 
-        # Paginação
         self.btn_prev_page = QPushButton("◀")
         self.btn_prev_page.setProperty("class", "tool-btn")
         self.btn_prev_page.clicked.connect(self.prev_page)
@@ -656,7 +328,6 @@ class StudyReaderView(QWidget):
 
         bottom_layout.addSpacing(12)
 
-        # Zoom
         self.btn_zoom_out = QPushButton("🔍 -")
         self.btn_zoom_out.setProperty("class", "tool-btn")
         self.btn_zoom_out.clicked.connect(self.zoom_out)
@@ -675,7 +346,6 @@ class StudyReaderView(QWidget):
 
         bottom_layout.addSpacing(12)
 
-        # Modo Escuro
         self.btn_dark_mode = QPushButton("🌙 Escuro")
         self.btn_dark_mode.setProperty("class", "tool-btn")
         self.btn_dark_mode.setCheckable(True)
@@ -684,7 +354,6 @@ class StudyReaderView(QWidget):
 
         bottom_layout.addStretch()
 
-        # Seleção de Cores para Grifo
         colors_config = [
             ("🟡", "#FFFF00", "1"),
             ("🟢", "#2ECC71", "2"),
@@ -702,7 +371,6 @@ class StudyReaderView(QWidget):
 
         self.update_color_button_styles()
 
-        # Desfazer Grifo
         self.btn_undo_highlight = QPushButton("↩️")
         self.btn_undo_highlight.setProperty("class", "tool-btn")
         self.btn_undo_highlight.setToolTip("Desfazer Último Grifo")
@@ -727,13 +395,11 @@ class StudyReaderView(QWidget):
         sidebar_layout.setContentsMargins(14, 14, 14, 14)
         sidebar_layout.setSpacing(12)
         
-        # Info do Bloco
         self.lbl_info = QLabel("<b>Nenhum bloco selecionado</b>")
         self.lbl_info.setWordWrap(True)
         self.lbl_info.setStyleSheet("font-size: 13px; color: #BAC2DE;")
         sidebar_layout.addWidget(self.lbl_info)
 
-        # Progresso
         self.block_progress = QProgressBar()
         self.block_progress.setStyleSheet("""
             QProgressBar {
@@ -753,7 +419,6 @@ class StudyReaderView(QWidget):
         """)
         sidebar_layout.addWidget(self.block_progress)
 
-        # Cronômetro / Pomodoro Card
         timer_frame = QFrame()
         timer_frame.setStyleSheet("background-color: #181825; border: 1px solid #313244; border-radius: 8px; padding: 10px;")
         timer_layout = QVBoxLayout(timer_frame)
@@ -764,7 +429,6 @@ class StudyReaderView(QWidget):
         lbl_timer_title.setAlignment(Qt.AlignCenter)
         timer_layout.addWidget(lbl_timer_title)
 
-        # Seletor de Modo
         mode_layout = QHBoxLayout()
         mode_layout.setSpacing(6)
 
@@ -798,9 +462,7 @@ class StudyReaderView(QWidget):
                 border: 1px solid #313244;
                 border-radius: 5px;
             }
-            QPushButton:hover {
-                background-color: #313244;
-            }
+            QPushButton:hover { background-color: #313244; }
         """)
         self.btn_pomodoro_settings.clicked.connect(self.open_pomodoro_settings)
         mode_layout.addWidget(self.btn_pomodoro_settings)
@@ -842,7 +504,6 @@ class StudyReaderView(QWidget):
 
         sidebar_layout.addWidget(timer_frame)
 
-        # Campo de Anotações
         lbl_notes_title = QLabel("<b>📝 Anotações da Página</b>")
         lbl_notes_title.setStyleSheet("font-size: 13px; color: #CDD6F4;")
         sidebar_layout.addWidget(lbl_notes_title)
@@ -858,14 +519,11 @@ class StudyReaderView(QWidget):
                 padding: 8px;
                 font-size: 13px;
             }
-            QTextEdit:focus {
-                border-color: #89B4FA;
-            }
+            QTextEdit:focus { border-color: #89B4FA; }
         """)
         self.txt_notes.textChanged.connect(self.save_notes)
         sidebar_layout.addWidget(self.txt_notes)
 
-        # Ações do Bloco
         self.btn_save_pause = QPushButton("💾 Pausar e Voltar")
         self.btn_save_pause.setStyleSheet("""
             QPushButton {
@@ -900,6 +558,12 @@ class StudyReaderView(QWidget):
 
         main_layout.addWidget(self.sidebar, stretch=0)
         outer_layout.addLayout(main_layout)
+        
+    def set_selection_mode(self, enabled: bool):
+        if enabled:
+            self.lbl_pdf_page.setCursor(Qt.IBeamCursor)
+        else:
+            self.lbl_pdf_page.setCursor(Qt.ArrowCursor)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -907,17 +571,14 @@ class StudyReaderView(QWidget):
             self.render_page()
 
     def toggle_floating_note(self):
-        """Exibe ou oculta o post-it flutuante e sincroniza o texto atual."""
         is_visible = not self.postit_frame.isVisible()
         self.postit_frame.setVisible(is_visible)
         
         if is_visible:
-            # Sincroniza o texto do painel lateral para o Post-it antes de exibir
             self.txt_postit_notes.blockSignals(True)
             self.txt_postit_notes.setPlainText(self.txt_notes.toPlainText())
             self.txt_postit_notes.blockSignals(False)
 
-            # Posiciona no canto superior direito apenas na primeira abertura
             if not getattr(self, '_postit_user_moved', False):
                 margin_top = 20 if self.is_focus_mode else 60
                 self.postit_frame.move(self.width() - self.postit_frame.width() - 20, margin_top)
@@ -926,24 +587,20 @@ class StudyReaderView(QWidget):
             self.txt_postit_notes.setFocus()
 
     def on_postit_text_changed(self):
-        """Sincroniza a escrita do Post-it para a caixa lateral e salva no Banco sem duplicar eventos."""
         if getattr(self, '_is_syncing_notes', False):
             return
 
         self._is_syncing_notes = True
         text = self.txt_postit_notes.toPlainText()
         
-        # Atualiza a caixa lateral silenciando os sinais
         self.txt_notes.blockSignals(True)
         self.txt_notes.setPlainText(text)
         self.txt_notes.blockSignals(False)
         
-        # Salva as alterações no Banco de Dados
         self.save_notes()
         self._is_syncing_notes = False
     
     def sync_active_block(self):
-        """Atualiza o contexto do bloco ativo com base na página atual."""
         db = SessionLocal()
         try:
             active_id = self.get_current_active_block_id(db)
@@ -965,7 +622,6 @@ class StudyReaderView(QWidget):
             self.left_sidebar.setVisible(is_visible)
 
     def go_to_page_from_toc(self, page_num_1based: int):
-        """Navega para a página clicada no Sumário ignorando a auto-conclusão do bloco."""
         if 1 <= page_num_1based <= self.total_pages:
             self.save_notes()
             self.current_page = page_num_1based - 1
@@ -981,7 +637,7 @@ class StudyReaderView(QWidget):
         long_min = int(self.long_break / 60)
 
         dialog = PomodoroSettingsDialog(work_min, short_min, long_min, parent=self)
-        if dialog.exec() == QDialog.Accepted:
+        if dialog.exec() == PomodoroSettingsDialog.Accepted:
             new_work, new_short, new_long = dialog.get_values()
             
             self.work_duration = new_work * 60
@@ -1008,7 +664,6 @@ class StudyReaderView(QWidget):
                 f"Novos tempos salvos:\n• Foco: {new_work} min\n• Pausa Curta: {new_short} min\n• Pausa Longa: {new_long} min"
             )
 
-    # --- LÓGICA DE GERENCIAMENTO DE TIMER E POMODORO ---
     def on_timer_mode_changed(self, index):
         self.pause_timer()
         
@@ -1127,14 +782,12 @@ class StudyReaderView(QWidget):
             
         self.refresh_timer_display()
 
-    # --- NAVEGAÇÃO E MODOS DA INTERFACE ---
     def toggle_focus_mode(self):
         top_window = self.window()
         if self.is_focus_mode:
             self.exit_focus_mode()
         else:
             if top_window:
-                # Salva se a janela estava maximizada antes de entrar em fullscreen
                 self._was_maximized = top_window.isMaximized()
                 top_window.showFullScreen()
             if hasattr(self, 'left_sidebar'):
@@ -1158,7 +811,6 @@ class StudyReaderView(QWidget):
         self.is_focus_mode = False
         top_window = self.window()
         if top_window:
-            # Restaura para maximizada se ela já estava assim, senão volta ao tamanho normal
             if getattr(self, '_was_maximized', True):
                 top_window.showMaximized()
             else:
@@ -1181,6 +833,8 @@ class StudyReaderView(QWidget):
         self.render_page()
 
     def set_highlight_color(self, hex_code: str):
+        self.setCursor(Qt.IBeamCursor)
+        self.lbl_pdf_page.setFocus()
         self.selected_color = hex_code
         self.lbl_pdf_page.set_selection_color(hex_code)
         self.update_color_button_styles()
@@ -1314,11 +968,6 @@ class StudyReaderView(QWidget):
         self.auto_fit_width = True
         self.render_page()
 
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        if self.doc and self.auto_fit_width:
-            self.render_page()
-
     def unload_pdf(self):
         if self.doc:
             try:
@@ -1411,6 +1060,8 @@ class StudyReaderView(QWidget):
                 self.render_page()
                 self.load_current_page_notes()
                 self.start_timer()
+
+                QTimer.singleShot(100, self.reset_zoom_to_fit)
         except Exception as e:
             db.rollback()
             QMessageBox.critical(self, "Erro", f"Não foi possível abrir o PDF: {str(e)}")
@@ -1418,7 +1069,6 @@ class StudyReaderView(QWidget):
             db.close()
 
     def load_current_page_notes(self):
-        """Carrega as anotações do Banco de Dados e atualiza ambos os campos de texto de forma síncrona."""
         db = SessionLocal()
         try:
             target_block_id = self.get_current_active_block_id(db)
@@ -1434,12 +1084,10 @@ class StudyReaderView(QWidget):
 
             self._is_syncing_notes = True
 
-            # Sincroniza a caixa de texto da barra lateral
             self.txt_notes.blockSignals(True)
             self.txt_notes.setPlainText(text_content)
             self.txt_notes.blockSignals(False)
 
-            # Sincroniza a caixa de texto do Post-it flutuante
             if hasattr(self, 'txt_postit_notes'):
                 self.txt_postit_notes.blockSignals(True)
                 self.txt_postit_notes.setPlainText(text_content)
@@ -1532,6 +1180,8 @@ class StudyReaderView(QWidget):
         pixmap = QPixmap.fromImage(qimg)
         self.lbl_pdf_page.setPixmap(pixmap)
         
+        self.lbl_pdf_page.set_char_layout(extract_page_chars(page), zoom=matrix.a)
+
         self.scroll_area.verticalScrollBar().setValue(v_scroll)
         self.scroll_area.horizontalScrollBar().setValue(h_scroll)
         
@@ -1553,6 +1203,9 @@ class StudyReaderView(QWidget):
         super().closeEvent(event)
 
     def undo_last_highlight(self):
+        if self.txt_notes.hasFocus() or (hasattr(self, 'txt_postit_notes') and self.txt_postit_notes.hasFocus()):
+            return
+
         if not self.current_pdf_id:
             return
 
@@ -1572,50 +1225,32 @@ class StudyReaderView(QWidget):
         finally:
             db.close()
 
-    def handle_area_selected(self, rect):
-        if not self.doc or self.current_page < 0:
+    def handle_area_selected(self, segments, selected_text):
+        if not self.doc or self.current_page < 0 or not segments:
             return
+        if selected_text.strip():
+            self.on_text_selected_to_highlight(selected_text, segments)
 
-        page = self.doc[self.current_page]
-        zoom = self.zoom_factor if self.zoom_factor > 0 else 1.0
-
-        pdf_rect = fitz.Rect(
-            rect.x() / zoom,
-            rect.y() / zoom,
-            (rect.x() + rect.width()) / zoom,
-            (rect.y() + rect.height()) / zoom
-        )
-
-        words = page.get_text("words", clip=pdf_rect)
-        if not words:
-            return
-
-        selected_text = " ".join([w[4] for w in words]).strip()
-        if selected_text:
-            self.on_text_selected_to_highlight(selected_text, pdf_rect)
-
-    def on_text_selected_to_highlight(self, selected_text: str, pdf_rect=None):
+    def on_text_selected_to_highlight(self, selected_text: str, segments=None):
         if not selected_text.strip() or not self.current_pdf_id:
             return
 
         db = SessionLocal()
         try:
-            x = pdf_rect.x0 if pdf_rect else None
-            y = pdf_rect.y0 if pdf_rect else None
-            width = pdf_rect.width if pdf_rect else None
-            height = pdf_rect.height if pdf_rect else None
-
-            StudyManager.add_highlight(
-                db=db,
-                pdf_id=self.current_pdf_id,
-                page_number=self.current_page + 1,
-                selected_text=selected_text.strip(),
-                color=self.selected_color,
-                x=x,
-                y=y,
-                width=width,
-                height=height
-            )
+            for idx, pdf_rect in enumerate(segments or []):
+                txt_payload = selected_text.strip() if idx == 0 else ""
+                
+                StudyManager.add_highlight(
+                    db=db,
+                    pdf_id=self.current_pdf_id,
+                    page_number=self.current_page + 1,
+                    selected_text=txt_payload,
+                    color=self.selected_color,
+                    x=pdf_rect.x0,
+                    y=pdf_rect.y0,
+                    width=pdf_rect.width,
+                    height=pdf_rect.height,
+                )
             self.render_page()
         except Exception as e:
             print(f"Erro ao salvar highlight: {e}")
@@ -1631,7 +1266,6 @@ class StudyReaderView(QWidget):
 
             block = db.query(StudyBlock).filter(StudyBlock.id == target_block_id).first()
             if block:
-                # Atualiza a página atual apenas se ela estiver dentro dos limites do bloco
                 current_page_num = self.current_page + 1
                 if block.page_start <= current_page_num <= block.page_end:
                     block.current_page = current_page_num
@@ -1663,10 +1297,6 @@ class StudyReaderView(QWidget):
             self.sync_active_block()
 
     def check_block_completion(self, from_toc=False):
-        """
-        Verifica se a página atual ultrapassou a meta do bloco.
-        Se a navegação veio do sumário (from_toc=True), a verificação é ignorada.
-        """
         if from_toc:
             return
 
@@ -1727,7 +1357,6 @@ class StudyReaderView(QWidget):
         try:
             next_block = None
             
-            # 1. Primeiro tenta buscar o próximo bloco do MESMO PDF (mesmo arquivo)
             if self.current_pdf_id:
                 next_block = (
                     db.query(StudyBlock)
@@ -1735,13 +1364,12 @@ class StudyReaderView(QWidget):
                     .filter(
                         Topic.pdf_id == self.current_pdf_id,
                         StudyBlock.status.in_([BlockStatus.PENDENTE, BlockStatus.EM_ANDAMENTO]),
-                        StudyBlock.id != self.block_id  # Evita o bloco recém-concluído
+                        StudyBlock.id != self.block_id
                     )
                     .order_by(Topic.order.asc(), StudyBlock.page_start.asc())
                     .first()
                 )
 
-            # 2. Se não houver mais blocos neste PDF, aí sim avisa e volta para o Dashboard/Ciclo
             if next_block:
                 next_id = next_block.id
                 next_block.status = BlockStatus.EM_ANDAMENTO
@@ -1801,7 +1429,6 @@ class StudyReaderView(QWidget):
 
         db = SessionLocal()
         try:
-            # Busca o bloco correspondente à página atual em vez de fiar-se apenas no self.block_id
             target_block_id = self.get_current_active_block_id(db) or self.block_id
             
             block = db.query(StudyBlock).filter(StudyBlock.id == target_block_id).first()
@@ -1810,7 +1437,6 @@ class StudyReaderView(QWidget):
                 block.completed_at = datetime.now(timezone.utc)
                 block.time_spent_seconds = (block.time_spent_seconds or 0) + self.elapsed_seconds
                 
-                # Garante que o progresso da página não seja sobrescrito com um valor fora da faixa do bloco
                 if self.current_page + 1 > block.page_end:
                     block.current_page = block.page_end
                 else:
