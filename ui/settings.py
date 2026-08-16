@@ -273,6 +273,8 @@ class SettingsView(QWidget):
 
         layout_general.addWidget(group_cloud)
 
+        
+
         # Status do Armazenamento
         group_stats = QGroupBox("📊 Resumo do Sistema & Banco de Dados")
         stats_layout = QHBoxLayout(group_stats)
@@ -358,6 +360,12 @@ class SettingsView(QWidget):
         lbl_danger_info.setStyleSheet("color: #BAC2DE; font-size: 12px;")
         lbl_danger_info.setWordWrap(True)
         danger_layout.addWidget(lbl_danger_info)
+
+        btn_reset_metrics = QPushButton("⏱️ Zerar Apenas Métricas e Tempos de Estudo")
+        btn_reset_metrics.setProperty("class", "danger-btn")
+        btn_reset_metrics.setCursor(Qt.PointingHandCursor)
+        btn_reset_metrics.clicked.connect(self.reset_metrics)
+        danger_layout.addWidget(btn_reset_metrics)
 
         btn_reset = QPushButton("💣 Resetar Aplicação Inteira")
         btn_reset.setProperty("class", "danger-btn")
@@ -458,6 +466,48 @@ class SettingsView(QWidget):
 
         main_layout.addWidget(self.tabs)
         self.update_cloud_ui_state()
+
+    def reset_metrics(self):
+        """Zera os tempos acumulados e o histórico de leituras sem apagar matérias ou PDFs."""
+        confirm = QMessageBox.question(
+            self,
+            "Confirmar Limpeza de Métricas",
+            "Deseja zerar todo o tempo investido e o histórico de leituras?\n\n"
+            "• Suas matérias, PDFs, anotações e cadernos de erros serão mantidos.\n"
+            "• Os contadores de tempo lido e sessões serão resetados.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+
+        if confirm != QMessageBox.Yes:
+            return
+
+        with SessionLocal() as db:
+            try:
+                # 1. Apaga todas as sessões de estudo gravadas no histórico
+                db.query(StudySession).delete()
+
+                # 2. Reseta o tempo gasto de todos os blocos de estudo para zero
+                db.query(StudyBlock).update({StudyBlock.time_spent_seconds: 0})
+
+                db.commit()
+
+                # Atualiza os dados exibidos na interface
+                self.refresh_stats()
+                self.app_reset.emit()  # Emite o sinal para atualizar o Dashboard e outras telas
+
+                QMessageBox.information(
+                    self,
+                    "Sucesso",
+                    "Todas as métricas e tempos de leitura foram zerados com sucesso!"
+                )
+            except Exception as e:
+                db.rollback()
+                QMessageBox.critical(
+                    self,
+                    "Erro",
+                    f"Falha ao zerar as métricas de estudo: {str(e)}"
+                )
 
     
     def check_for_updates(self):
