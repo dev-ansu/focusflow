@@ -1377,16 +1377,12 @@ class StudyReaderView(QWidget):
                 if hasattr(self, 'toc_tree'):
                     if db_topics:
                         self.toc_tree.load_db_topics(db_topics)
-                        if hasattr(self, 'left_sidebar'):
-                            self.left_sidebar.setVisible(True)
                     else:
                         toc = self.doc.get_toc(simple=False) if hasattr(self.doc, 'get_toc') else []
                         if not toc and hasattr(self.doc, 'get_toc'):
                             toc = self.doc.get_toc()
 
                         self.toc_tree.load_toc(toc)
-                        if toc and hasattr(self, 'left_sidebar'):
-                            self.left_sidebar.setVisible(True)
 
                 saved_page = block.current_page if (block.current_page and block.current_page > 0) else self.page_start
                 self.current_page = max(0, saved_page - 1)
