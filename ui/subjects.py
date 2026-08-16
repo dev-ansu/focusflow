@@ -3,7 +3,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QListWidget, QListWidgetItem,
     QPushButton, QLabel, QInputDialog, QMessageBox, QTreeWidget, 
     QTreeWidgetItem, QFileDialog, QHeaderView, QAbstractItemView,
-    QDialog, QTextEdit, QComboBox, QFrame
+    QDialog, QTextEdit, QComboBox, QFrame, QMenu
 )
 from PySide6.QtCore import Qt, Signal
 import pymupdf as fitz
@@ -207,6 +207,15 @@ class SubjectView(QWidget):
                 border: none;
                 border-bottom: 1px solid #313244;
             }
+            QMenu {
+                background-color: #181825;
+                color: #CDD6F4;
+                border: 1px solid #313244;
+            }
+            QMenu::item:selected {
+                background-color: #45475A;
+                color: #89B4FA;
+            }
         """)
 
         layout = QHBoxLayout(self)
@@ -303,6 +312,10 @@ class SubjectView(QWidget):
         self.tree_topics.setDragDropMode(QAbstractItemView.InternalMove)
         self.tree_topics.setDefaultDropAction(Qt.MoveAction)
         self.tree_topics.itemDoubleClicked.connect(self.on_item_double_clicked)
+        
+        # Menu de contexto para clicar com botão direito nos itens da árvore
+        self.tree_topics.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.tree_topics.customContextMenuRequested.connect(self.show_tree_context_menu)
 
         right_layout.addWidget(self.tree_topics)
 
@@ -348,6 +361,16 @@ class SubjectView(QWidget):
         btn_start_study.setCursor(Qt.PointingHandCursor)
         btn_start_study.clicked.connect(self.start_study_selected)
         action_layout.addWidget(btn_start_study)
+
+        btn_uncomplete = QPushButton("↩️ Desconcluir Bloco")
+        btn_uncomplete.setToolTip("Volta o bloco selecionado para o status 'PENDENTE'")
+        btn_uncomplete.setStyleSheet("""
+            QPushButton { background-color: #313244; color: #F9E2AF; border: 1px solid #45475A; }
+            QPushButton:hover { background-color: #45475A; }
+        """)
+        btn_uncomplete.setCursor(Qt.PointingHandCursor)
+        btn_uncomplete.clicked.connect(self.uncomplete_selected_block)
+        action_layout.addWidget(btn_uncomplete)
 
         action_layout.addSpacing(6)
 
@@ -405,7 +428,7 @@ class SubjectView(QWidget):
         btn_export_notes.clicked.connect(self.export_notes)
         action_layout.addWidget(btn_export_notes)
 
-        btn_reset_progress = QPushButton("🔄 Zerar")
+        btn_reset_progress = QPushButton("🔄 Zerar Matéria")
         btn_reset_progress.setToolTip("Zerar todo o progresso desta matéria")
         btn_reset_progress.setStyleSheet("""
             QPushButton { background-color: #313244; color: #FAB387; border: 1px solid #45475A; }
@@ -420,6 +443,78 @@ class SubjectView(QWidget):
 
         self.refresh()
 
+    def show_tree_context_menu(self, position):
+        """Exibe o menu de contexto ao clicar com o botão direito nos itens da árvore."""
+        item = self.tree_topics.itemAt(position)
+        if not item:
+            return
+
+        item_type = item.data(0, Qt.UserRole + 1)
+        menu = QMenu(self)
+
+        if item_type == "BLOCK":
+            block_id = item.data(0, Qt.UserRole)
+            
+            action_study = menu.addAction("▶️ Estudar Bloco")
+            action_study.triggered.connect(lambda: self.start_study_signal.emit(block_id))
+
+            action_uncomplete = menu.addAction("↩️ Desconcluir Bloco")
+            action_uncomplete.triggered.connect(lambda: self.uncomplete_block_by_id(block_id))
+
+        elif item_type == "TOPIC":
+            topic_id = item.data(0, Qt.UserRole)
+
+            action_study = menu.addAction("▶️ Iniciar Estudos do Tópico")
+            action_study.triggered.connect(self.start_study_selected)
+
+            action_delete = menu.addAction("🗑️ Apagar Tópico")
+            action_delete.triggered.connect(self.delete_selected_topic)
+
+        menu.exec(self.tree_topics.viewport().mapToGlobal(position))
+
+    def uncomplete_selected_block(self):
+        """Desconclui o bloco selecionado na árvore."""
+        current_item = self.tree_topics.currentItem()
+        if not current_item:
+            QMessageBox.warning(self, "Aviso", "Selecione um bloco para desconcluir.")
+            return
+
+        item_type = current_item.data(0, Qt.UserRole + 1)
+        if item_type != "BLOCK":
+            QMessageBox.warning(self, "Aviso", "Por favor, selecione um bloco (e não um tópico).")
+            return
+
+        block_id = current_item.data(0, Qt.UserRole)
+        if block_id:
+            self.uncomplete_block_by_id(block_id)
+
+    def uncomplete_block_by_id(self, block_id: int):
+        """Executa o reset de status do bloco para PENDENTE no banco de dados."""
+        with SessionLocal() as db:
+            try:
+                block = db.query(StudyBlock).filter(StudyBlock.id == block_id).first()
+                if not block:
+                    QMessageBox.warning(self, "Erro", "Bloco não encontrado.")
+                    return
+
+                if block.status == BlockStatus.PENDENTE:
+                    QMessageBox.information(self, "Aviso", "Este bloco já está com o status Pendente.")
+                    return
+
+                block.status = BlockStatus.PENDENTE
+                block.completed_at = None
+                block.current_page = block.page_start  # Restaura a página inicial do bloco
+
+                db.commit()
+                QMessageBox.information(self, "Sucesso", "Bloco retornado para o status Pendente!")
+
+                if self.selected_subject_id:
+                    self.load_topics(self.selected_subject_id)
+
+            except Exception as e:
+                db.rollback()
+                QMessageBox.critical(self, "Erro", f"Falha ao desconcluir o bloco: {str(e)}")
+
     def select_subject_by_id(self, subject_id: int):
         """Seleciona a matéria na lista e força o carregamento imediato dos seus tópicos na árvore."""
         for i in range(self.list_subjects.count()):
@@ -427,7 +522,7 @@ class SubjectView(QWidget):
             if item.data(Qt.UserRole) == subject_id:
                 self.list_subjects.setCurrentItem(item)
                 self.selected_subject_id = subject_id
-                self.load_topics(subject_id)  # <-- Garante a montagem da árvore antes de buscar o tópico
+                self.load_topics(subject_id)
                 break
 
     def move_subject(self, action):

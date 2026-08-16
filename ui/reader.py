@@ -941,6 +941,23 @@ class StudyReaderView(QWidget):
         # Salva as alterações no Banco de Dados
         self.save_notes()
         self._is_syncing_notes = False
+    
+    def sync_active_block(self):
+        """Atualiza o contexto do bloco ativo com base na página atual."""
+        db = SessionLocal()
+        try:
+            active_id = self.get_current_active_block_id(db)
+            if active_id and active_id != self.block_id:
+                self.block_id = active_id
+                block = db.query(StudyBlock).filter(StudyBlock.id == active_id).first()
+                if block:
+                    self.page_start = block.page_start
+                    self.page_end = block.page_end
+                    self.block_status = block.status
+        except Exception as e:
+            print(f"Erro ao sincronizar bloco ativo: {e}")
+        finally:
+            db.close()
 
     def toggle_left_sidebar(self):
         if hasattr(self, 'left_sidebar'):
@@ -956,6 +973,7 @@ class StudyReaderView(QWidget):
             self.scroll_area.verticalScrollBar().setValue(0)
             self.save_current_page()
             self.check_block_completion(from_toc=True)
+            self.sync_active_block()
 
     def open_pomodoro_settings(self):
         work_min = int(self.work_duration / 60)
@@ -1435,8 +1453,10 @@ class StudyReaderView(QWidget):
             db.close()
 
     def get_current_active_block_id(self, db):
-        current_page_num = self.current_page + 1
+        if self.block_id:
+            return self.block_id
 
+        current_page_num = self.current_page + 1
         if hasattr(self, 'current_pdf_id') and self.current_pdf_id:
             block = (
                 db.query(StudyBlock)
@@ -1451,7 +1471,7 @@ class StudyReaderView(QWidget):
             if block:
                 return block.id
 
-        return self.block_id
+        return None
 
     def render_page(self, page_num: int = None):
         if page_num is not None:
@@ -1603,17 +1623,21 @@ class StudyReaderView(QWidget):
             db.close()
 
     def save_current_page(self):
-        if not self.block_id:
-            return
-        
         db = SessionLocal()
         try:
-            block = db.query(StudyBlock).filter(StudyBlock.id == self.block_id).first()
+            target_block_id = self.get_current_active_block_id(db) or self.block_id
+            if not target_block_id:
+                return
+
+            block = db.query(StudyBlock).filter(StudyBlock.id == target_block_id).first()
             if block:
-                block.current_page = self.current_page + 1
-                if block.status == BlockStatus.PENDENTE:
-                    block.status = BlockStatus.EM_ANDAMENTO
-                db.commit()
+                # Atualiza a página atual apenas se ela estiver dentro dos limites do bloco
+                current_page_num = self.current_page + 1
+                if block.page_start <= current_page_num <= block.page_end:
+                    block.current_page = current_page_num
+                    if block.status == BlockStatus.PENDENTE:
+                        block.status = BlockStatus.EM_ANDAMENTO
+                    db.commit()
         except Exception:
             db.rollback()
         finally:
@@ -1626,6 +1650,7 @@ class StudyReaderView(QWidget):
             self.render_page()
             self.scroll_area.verticalScrollBar().setValue(0)
             self.save_current_page()
+            self.sync_active_block()
 
     def next_page(self):
         if self.current_page < self.total_pages - 1:
@@ -1635,6 +1660,7 @@ class StudyReaderView(QWidget):
             self.scroll_area.verticalScrollBar().setValue(0)
             self.save_current_page()
             self.check_block_completion()
+            self.sync_active_block()
 
     def check_block_completion(self, from_toc=False):
         """
@@ -1775,11 +1801,21 @@ class StudyReaderView(QWidget):
 
         db = SessionLocal()
         try:
-            block = db.query(StudyBlock).filter(StudyBlock.id == self.block_id).first()
+            # Busca o bloco correspondente à página atual em vez de fiar-se apenas no self.block_id
+            target_block_id = self.get_current_active_block_id(db) or self.block_id
+            
+            block = db.query(StudyBlock).filter(StudyBlock.id == target_block_id).first()
             if block:
                 block.status = BlockStatus.CONCLUIDO
                 block.completed_at = datetime.now(timezone.utc)
                 block.time_spent_seconds = (block.time_spent_seconds or 0) + self.elapsed_seconds
+                
+                # Garante que o progresso da página não seja sobrescrito com um valor fora da faixa do bloco
+                if self.current_page + 1 > block.page_end:
+                    block.current_page = block.page_end
+                else:
+                    block.current_page = max(block.page_start, self.current_page + 1)
+                    
                 db.commit()
                 self.elapsed_seconds = 0
                 self.block_status = BlockStatus.CONCLUIDO
