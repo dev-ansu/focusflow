@@ -14,6 +14,99 @@ from services.study_manager import StudyManager
 
 from PySide6.QtWidgets import QDialog, QSpinBox, QFormLayout, QDialogButtonBox, QTreeWidget, QTreeWidgetItem
 
+class DraggablePostIt(QFrame):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.drag_position = QPoint()
+        self.resizing = False
+        self.resize_edge = None
+        self.margin = 8  # Margem em pixels nas bordas para ativar o redimensionamento
+
+        # Define os limites de tamanho (Mínimo / Máximo)
+        self.setMinimumSize(200, 150)
+        self.setMaximumSize(500, 400)
+        self.setMouseTracking(True)  # Permite detectar a aproximação do cursor nas bordas
+
+    def keyPressEvent(self, event):
+        # Fecha o Post-it ao pressionar a tecla ESC
+        if event.key() == Qt.Key_Escape:
+            self.hide()
+            event.accept()
+        else:
+            super().keyPressEvent(event)
+
+    def _get_edge(self, pos):
+        """Identifica se o cursor do mouse está sobre uma borda para redimensionar."""
+        edge = 0
+        rect = self.rect()
+
+        if pos.x() <= self.margin:
+            edge |= 1  # Esquerda
+        elif pos.x() >= rect.width() - self.margin:
+            edge |= 2  # Direita
+
+        if pos.y() <= self.margin:
+            edge |= 4  # Topo
+        elif pos.y() >= rect.height() - self.margin:
+            edge |= 8  # Base
+
+        return edge
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            edge = self._get_edge(event.position().toPoint())
+            if edge != 0:
+                self.resizing = True
+                self.resize_edge = edge
+            else:
+                self.resizing = False
+                self.drag_position = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        pos = event.position().toPoint()
+
+        # Altera o ícone do cursor ao passar pelas bordas
+        if not self.resizing and not (event.buttons() & Qt.LeftButton):
+            edge = self._get_edge(pos)
+            if edge in (3, 12):  # Esquerda/Direita pura
+                self.setCursor(Qt.SizeHorCursor)
+            elif edge in (5, 10):  # Topo/Base pura ou diagnonais
+                self.setCursor(Qt.SizeFDiagCursor)
+            elif edge in (6, 9):
+                self.setCursor(Qt.SizeBDiagCursor)
+            elif edge & (4 | 8):
+                self.setCursor(Qt.SizeVerCursor)
+            else:
+                self.setCursor(Qt.OpenHandCursor)
+            return
+
+        # Executa o Redimensionamento mantendo as restrições min/max
+        if self.resizing and (event.buttons() & Qt.LeftButton):
+            global_pos = event.globalPosition().toPoint()
+            geom = self.geometry()
+
+            if self.resize_edge & 2:  # Borda Direita
+                new_w = max(self.minimumWidth(), min(global_pos.x() - geom.left(), self.maximumWidth()))
+                geom.setWidth(new_w)
+
+            if self.resize_edge & 8:  # Borda Inferior
+                new_h = max(self.minimumHeight(), min(global_pos.y() - geom.top(), self.maximumHeight()))
+                geom.setHeight(new_h)
+
+            self.setGeometry(geom)
+            event.accept()
+
+        # Executa o Arraste simples se não estiver redimensionando
+        elif event.buttons() & Qt.LeftButton:
+            self.move(event.globalPosition().toPoint() - self.drag_position)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self.resizing = False
+        self.setCursor(Qt.OpenHandCursor)
+        super().mouseReleaseEvent(event)
+
 
 class PomodoroSettingsDialog(QDialog):
     def __init__(self, work_min=25, short_min=5, long_min=15, parent=None):
@@ -311,6 +404,7 @@ class StudyReaderView(QWidget):
 
         QShortcut(QKeySequence("F11"), self, self.toggle_focus_mode)
         QShortcut(QKeySequence("Escape"), self, self.exit_focus_mode)
+        QShortcut(QKeySequence("Ctrl+N"), self, self.toggle_floating_note)
 
         QShortcut(QKeySequence("1"), self, lambda: self.set_highlight_color("#FFFF00"))
         QShortcut(QKeySequence("2"), self, lambda: self.set_highlight_color("#2ECC71"))
@@ -356,6 +450,60 @@ class StudyReaderView(QWidget):
                 border-color: #89B4FA;
             }
         """)
+
+        # --- POST-IT FLUTUANTE (MODO FOCO / ACESSO RÁPIDO) ---
+        self.postit_frame = DraggablePostIt(self)
+        self.postit_frame.setObjectName("PostItFrame")
+        self.postit_frame.resize(260, 220) 
+        self.postit_frame.setVisible(False)
+        self.postit_frame.setCursor(Qt.OpenHandCursor)
+        self.postit_frame.setStyleSheet("""
+            QFrame#PostItFrame {
+                background-color: #313244;
+                border: 2px solid #F9E2AF;
+                border-radius: 8px;
+            }
+            QLabel { color: #F9E2AF; font-weight: bold; font-size: 12px; border: none; }
+            QPushButton {
+                background-color: transparent;
+                color: #CDD6F4;
+                border: none;
+                font-weight: bold;
+                font-size: 14px;
+            }
+            QPushButton:hover { color: #F38BA8; }
+            QTextEdit {
+                background-color: #181825;
+                color: #CDD6F4;
+                border: 1px solid #45475A;
+                border-radius: 6px;
+                padding: 6px;
+                font-size: 12px;
+            }
+            QTextEdit:focus { border-color: #F9E2AF; }
+        """)
+
+        postit_layout = QVBoxLayout(self.postit_frame)
+        postit_layout.setContentsMargins(8, 6, 8, 8)
+        postit_layout.setSpacing(6)
+
+        # Cabeçalho do Post-it
+        postit_header = QHBoxLayout()
+        lbl_postit_title = QLabel("📌 Nota Rápida")
+        btn_close_postit = QPushButton("✕")
+        btn_close_postit.setCursor(Qt.PointingHandCursor)
+        btn_close_postit.clicked.connect(self.toggle_floating_note)
+
+        postit_header.addWidget(lbl_postit_title)
+        postit_header.addStretch()
+        postit_header.addWidget(btn_close_postit)
+        postit_layout.addLayout(postit_header)
+
+        # Campo de texto do Post-it
+        self.txt_postit_notes = QTextEdit()
+        self.txt_postit_notes.setPlaceholderText("Digite aqui sua nota...")
+        self.txt_postit_notes.textChanged.connect(self.on_postit_text_changed)
+        postit_layout.addWidget(self.txt_postit_notes)
 
         outer_layout = QVBoxLayout(self)
         outer_layout.setContentsMargins(0, 0, 0, 0)
@@ -752,7 +900,38 @@ class StudyReaderView(QWidget):
 
         main_layout.addWidget(self.sidebar, stretch=0)
         outer_layout.addLayout(main_layout)
-    
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if self.doc and self.auto_fit_width:
+            self.render_page()
+
+    def toggle_floating_note(self):
+        """Exibe ou oculta o post-it flutuante e foca na caixa de texto."""
+        is_visible = not self.postit_frame.isVisible()
+        self.postit_frame.setVisible(is_visible)
+        
+        if is_visible:
+            # Posiciona no canto superior direito apenas se for a primeira abertura na sessão
+            if not getattr(self, '_postit_user_moved', False):
+                margin_top = 20 if self.is_focus_mode else 60
+                self.postit_frame.move(self.width() - self.postit_frame.width() - 20, margin_top)
+            
+            self.postit_frame.raise_()
+            self.txt_postit_notes.setFocus()
+
+    def on_postit_text_changed(self):
+        """Sincroniza a escrita do Post-it para a caixa lateral e salva no Banco."""
+        text = self.txt_postit_notes.toPlainText()
+        
+        # Atualiza a caixa lateral sem disparar o evento dela novamente
+        self.txt_notes.blockSignals(True)
+        self.txt_notes.setPlainText(text)
+        self.txt_notes.blockSignals(False)
+        
+        # Chama o método original de salvamento de notas
+        self.save_notes()
+
     def toggle_left_sidebar(self):
         if hasattr(self, 'left_sidebar'):
             is_visible = not self.left_sidebar.isVisible()
@@ -1204,23 +1383,26 @@ class StudyReaderView(QWidget):
         try:
             target_block_id = self.get_current_active_block_id(db)
             if not target_block_id:
-                self.txt_notes.blockSignals(True)
-                self.txt_notes.setPlainText("")
-                self.txt_notes.blockSignals(False)
-                return
+                text_content = ""
+            else:
+                current_page_num = self.current_page + 1
+                note = db.query(Note).filter(
+                    Note.block_id == target_block_id,
+                    Note.page_number == current_page_num
+                ).first()
+                text_content = note.content if (note and note.content) else ""
 
-            current_page_num = self.current_page + 1
-
-            note = db.query(Note).filter(
-                Note.block_id == target_block_id,
-                Note.page_number == current_page_num
-            ).first()
-
-            text_content = note.content if (note and note.content) else ""
-
+            # Sincroniza a caixa de texto da barra lateral
             self.txt_notes.blockSignals(True)
             self.txt_notes.setPlainText(text_content)
             self.txt_notes.blockSignals(False)
+
+            # Sincroniza a caixa de texto do Post-it flutuante
+            if hasattr(self, 'txt_postit_notes'):
+                self.txt_postit_notes.blockSignals(True)
+                self.txt_postit_notes.setPlainText(text_content)
+                self.txt_postit_notes.blockSignals(False)
+
         except Exception as e:
             print(f"Erro ao carregar anotações da página: {e}")
         finally:

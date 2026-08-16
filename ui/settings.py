@@ -393,6 +393,8 @@ class SettingsView(QWidget):
             ("Escape", "Sair do Modo Foco", "Leitor"),
             ("Seta Direita / PgDown", "Próxima Página", "Leitor"),
             ("Seta Esquerda / PgUp", "Página Anterior", "Leitor"),
+            ("Ctrl + N", "Abre o componente flutuante para anotação", "Leitor"),
+            ("Ctrl + ESC", "Fecha o componente flutuante para anotação", "Leitor"),
             ("Ctrl + +", "Ampliar Zoom (Zoom In)", "Leitor"),
             ("Ctrl + -", "Reduzir Zoom (Zoom Out)", "Leitor"),
             ("Ctrl + D", "Alterna Modo Escuro / Claro (Inversão de Matriz)", "Leitor"),
