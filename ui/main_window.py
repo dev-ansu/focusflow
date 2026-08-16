@@ -404,7 +404,10 @@ class MainWindow(QMainWindow):
         self.sidebar_widget.setVisible(not is_visible)
 
     def switch_view(self, index: int):
-        if index != 2:
+        # Controla a visibilidade da barra lateral da janela principal
+        if index == 2:
+            self.sidebar_widget.setVisible(False)
+        else:
             self.sidebar_widget.setVisible(True)
 
         for i, btn in enumerate(self.nav_buttons):

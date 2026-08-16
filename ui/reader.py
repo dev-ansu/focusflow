@@ -907,12 +907,17 @@ class StudyReaderView(QWidget):
             self.render_page()
 
     def toggle_floating_note(self):
-        """Exibe ou oculta o post-it flutuante e foca na caixa de texto."""
+        """Exibe ou oculta o post-it flutuante e sincroniza o texto atual."""
         is_visible = not self.postit_frame.isVisible()
         self.postit_frame.setVisible(is_visible)
         
         if is_visible:
-            # Posiciona no canto superior direito apenas se for a primeira abertura na sessão
+            # Sincroniza o texto do painel lateral para o Post-it antes de exibir
+            self.txt_postit_notes.blockSignals(True)
+            self.txt_postit_notes.setPlainText(self.txt_notes.toPlainText())
+            self.txt_postit_notes.blockSignals(False)
+
+            # Posiciona no canto superior direito apenas na primeira abertura
             if not getattr(self, '_postit_user_moved', False):
                 margin_top = 20 if self.is_focus_mode else 60
                 self.postit_frame.move(self.width() - self.postit_frame.width() - 20, margin_top)
@@ -921,16 +926,21 @@ class StudyReaderView(QWidget):
             self.txt_postit_notes.setFocus()
 
     def on_postit_text_changed(self):
-        """Sincroniza a escrita do Post-it para a caixa lateral e salva no Banco."""
+        """Sincroniza a escrita do Post-it para a caixa lateral e salva no Banco sem duplicar eventos."""
+        if getattr(self, '_is_syncing_notes', False):
+            return
+
+        self._is_syncing_notes = True
         text = self.txt_postit_notes.toPlainText()
         
-        # Atualiza a caixa lateral sem disparar o evento dela novamente
+        # Atualiza a caixa lateral silenciando os sinais
         self.txt_notes.blockSignals(True)
         self.txt_notes.setPlainText(text)
         self.txt_notes.blockSignals(False)
         
-        # Chama o método original de salvamento de notas
+        # Salva as alterações no Banco de Dados
         self.save_notes()
+        self._is_syncing_notes = False
 
     def toggle_left_sidebar(self):
         if hasattr(self, 'left_sidebar'):
@@ -1105,13 +1115,20 @@ class StudyReaderView(QWidget):
         if self.is_focus_mode:
             self.exit_focus_mode()
         else:
-            self.is_focus_mode = True
             if top_window:
+                # Salva se a janela estava maximizada antes de entrar em fullscreen
+                self._was_maximized = top_window.isMaximized()
                 top_window.showFullScreen()
+            if hasattr(self, 'left_sidebar'):
+                self.left_sidebar.setVisible(False)
+
+            self.is_focus_mode = True
             
             self.header_widget.setVisible(False)
             self.sidebar.setVisible(False)
             self.bottom_bar.setVisible(False)
+            if hasattr(self, 'left_sidebar'):
+                self.left_sidebar.setVisible(False)
             
             if self.auto_fit_width:
                 self.render_page()
@@ -1123,12 +1140,20 @@ class StudyReaderView(QWidget):
         self.is_focus_mode = False
         top_window = self.window()
         if top_window:
-            top_window.showNormal()
+            # Restaura para maximizada se ela já estava assim, senão volta ao tamanho normal
+            if getattr(self, '_was_maximized', True):
+                top_window.showMaximized()
+            else:
+                top_window.showNormal()
 
         self.header_widget.setVisible(True)
         self.sidebar.setVisible(True)
         self.bottom_bar.setVisible(True)
-        self.lbl_header_timer.setVisible(False)
+        if hasattr(self, 'left_sidebar'):
+            self.left_sidebar.setVisible(True)
+            
+        if hasattr(self, 'lbl_header_timer'):
+            self.lbl_header_timer.setVisible(False)
 
         if self.auto_fit_width:
             self.render_page()
@@ -1379,6 +1404,7 @@ class StudyReaderView(QWidget):
             db.close()
 
     def load_current_page_notes(self):
+        """Carrega as anotações do Banco de Dados e atualiza ambos os campos de texto de forma síncrona."""
         db = SessionLocal()
         try:
             target_block_id = self.get_current_active_block_id(db)
@@ -1392,6 +1418,8 @@ class StudyReaderView(QWidget):
                 ).first()
                 text_content = note.content if (note and note.content) else ""
 
+            self._is_syncing_notes = True
+
             # Sincroniza a caixa de texto da barra lateral
             self.txt_notes.blockSignals(True)
             self.txt_notes.setPlainText(text_content)
@@ -1402,6 +1430,8 @@ class StudyReaderView(QWidget):
                 self.txt_postit_notes.blockSignals(True)
                 self.txt_postit_notes.setPlainText(text_content)
                 self.txt_postit_notes.blockSignals(False)
+
+            self._is_syncing_notes = False
 
         except Exception as e:
             print(f"Erro ao carregar anotações da página: {e}")
