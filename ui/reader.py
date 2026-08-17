@@ -277,6 +277,81 @@ class StudyReaderView(QWidget):
         pdf_container_layout.setContentsMargins(12, 12, 12, 12)
         pdf_container_layout.setSpacing(8)
 
+        # BANNER DE CONCLUSÃO DO BLOCO (INLINE)
+        self.completion_banner = QFrame()
+        self.completion_banner.setFrameShape(QFrame.StyledPanel)
+        self.completion_banner.setVisible(False)
+        self.completion_banner.setStyleSheet("""
+            QFrame {
+                background-color: #2D4F3E;
+                border: 1px solid #A6E3A1;
+                border-radius: 8px;
+                padding: 10px;
+            }
+            QLabel {
+                color: #CDD6F4;
+                border: none;
+                font-size: 13px;
+            }
+            QCheckBox {
+                color: #BAC2DE;
+                font-size: 12px;
+                border: none;
+            }
+            QPushButton#btnBannerContinue {
+                background-color: #A6E3A1;
+                color: #11111B;
+                font-weight: bold;
+                border-radius: 5px;
+                padding: 6px 14px;
+                border: none;
+            }
+            QPushButton#btnBannerContinue:hover {
+                background-color: #94E2D5;
+            }
+            QPushButton#btnBannerBack {
+                background-color: #313244;
+                color: #CDD6F4;
+                border-radius: 5px;
+                padding: 6px 14px;
+                border: 1px solid #45475A;
+            }
+            QPushButton#btnBannerBack:hover {
+                background-color: #45475A;
+            }
+        """)
+
+        banner_layout = QVBoxLayout(self.completion_banner)
+        banner_layout.setContentsMargins(8, 8, 8, 8)
+        banner_layout.setSpacing(8)
+
+        self.lbl_banner_text = QLabel("<b>🎉 Bloco Concluído!</b>")
+        banner_layout.addWidget(self.lbl_banner_text)
+
+        self.cb_dont_show_banner = QCheckBox("Não mostrar esta mensagem novamente durante a leitura")
+        banner_layout.addWidget(self.cb_dont_show_banner)
+
+        banner_actions = QHBoxLayout()
+        banner_actions.setSpacing(10)
+
+        self.btn_banner_continue = QPushButton("Continuar Lendo")
+        self.btn_banner_continue.setObjectName("btnBannerContinue")
+        self.btn_banner_continue.setCursor(Qt.PointingHandCursor)
+        self.btn_banner_continue.clicked.connect(self.hide_completion_banner)
+
+        self.btn_banner_back = QPushButton("Voltar ao Dashboard")
+        self.btn_banner_back.setObjectName("btnBannerBack")
+        self.btn_banner_back.setCursor(Qt.PointingHandCursor)
+        self.btn_banner_back.clicked.connect(self.back_requested.emit)
+
+        banner_actions.addWidget(self.btn_banner_continue)
+        banner_actions.addWidget(self.btn_banner_back)
+        banner_actions.addStretch()
+
+        banner_layout.addLayout(banner_actions)
+
+        pdf_container_layout.addWidget(self.completion_banner)
+
         self.scroll_area = QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setAlignment(Qt.AlignCenter)
@@ -967,6 +1042,12 @@ class StudyReaderView(QWidget):
     def reset_zoom_to_fit(self):
         self.auto_fit_width = True
         self.render_page()
+    
+    def hide_completion_banner(self):
+        if self.cb_dont_show_banner.isChecked():
+            self.dont_show_completion_msg = True
+        self.completion_banner.setVisible(False)
+        self.load_next_sequential_block()
 
     def unload_pdf(self):
         if self.doc:
@@ -985,6 +1066,9 @@ class StudyReaderView(QWidget):
         self.lbl_info.setText("<b>Nenhum bloco selecionado</b>")
         self.lbl_header_title.setText("Leitor de Estudos")
         
+        if hasattr(self, 'completion_banner'):
+            self.completion_banner.setVisible(False)
+
         if hasattr(self, 'toc_tree'):
             self.toc_tree.clear()
         if hasattr(self, 'left_sidebar'):
@@ -1328,29 +1412,12 @@ class StudyReaderView(QWidget):
                 self.load_next_sequential_block()
                 return
 
-            msg = QMessageBox(self)
-            msg.setIcon(QMessageBox.Information)
-            msg.setWindowTitle("Bloco Concluído! 🎉")
-            msg.setText(
-                "<b>Parabéns! Você concluiu este bloco de estudos.</b><br><br>"
-                f"Faixa concluída: Páginas {self.page_start} até {self.page_end}.<br><br>"
+            self.lbl_banner_text.setText(
+                "<b>Parabéns! Você concluiu este bloco de estudos. 🎉</b><br>"
+                f"Faixa concluída: Páginas {self.page_start} até {self.page_end}.<br>"
                 "Deseja continuar lendo o próximo bloco deste PDF ou voltar para o ciclo no Dashboard?"
             )
-            
-            cb_dont_show = QCheckBox("Não mostrar esta mensagem novamente durante a leitura")
-            msg.setCheckBox(cb_dont_show)
-
-            btn_continue = msg.addButton("Continuar Lendo", QMessageBox.AcceptRole)
-            msg.addButton("Voltar ao Dashboard", QMessageBox.RejectRole)
-            msg.exec()
-
-            if cb_dont_show.isChecked():
-                self.dont_show_completion_msg = True
-
-            if msg.clickedButton() == btn_continue:
-                self.load_next_sequential_block()
-            else:
-                self.back_requested.emit()
+            self.completion_banner.setVisible(True)
 
     def load_next_sequential_block(self):
         db = SessionLocal()
